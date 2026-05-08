@@ -1,11 +1,11 @@
 ---
 name: gemini-image-generator
-description: "This skill generates images using Gemini 3 Pro Image API with real-time web search capabilities via Google Search integration. It supports both text-to-image and image-to-image generation including image editing, style transfer, and image merging. The search functionality ensures generated content can incorporate current information and accurate references. This skill should be used when users want to create, modify, or transform images using AI. The workflow involves three steps: first, Claude analyzes user intent and clarifies unclear requirements through conversation; second, Claude converts intent to structured JSON prompt format; third, Claude calls the generate_image.py script to generate images and save results to the generation-image directory."
+description: "This skill generates images using either Gemini 3 Pro Image API or OpenAI GPT Image API (gpt-image-2), configurable via environment variables. It supports both text-to-image and image-to-image generation including image editing, style transfer, and image merging. The Gemini provider includes real-time web search capabilities via Google Search integration. The provider is selected via the IMAGE_PROVIDER env variable (gemini or gpt). This skill should be used when users want to create, modify, or transform images using AI. The workflow involves three steps: first, Claude analyzes user intent and clarifies unclear requirements through conversation; second, Claude converts intent to structured JSON prompt format; third, Claude calls the generate_image.py script to generate images and save results to the generation-image directory."
 ---
 
-# Gemini Image Generator Skill
+# Gemini / GPT Image Generator Skill
 
-Generate high-quality images using Gemini 3 Pro Image API with structured JSON prompts.
+Generate high-quality images using Gemini 3 Pro Image API or OpenAI GPT Image API with structured JSON prompts. Provider is configured via the `IMAGE_PROVIDER` environment variable.
 
 ## Capabilities
 
@@ -26,12 +26,19 @@ Generate high-quality images using Gemini 3 Pro Image API with structured JSON p
 Ensure the following dependencies are installed:
 
 ```bash
-pip install -q -U google-genai Pillow python-dotenv
+pip install -q -U google-genai openai Pillow python-dotenv
 ```
 
 Environment variables must be set:
+- `IMAGE_PROVIDER`: Choose provider - `gemini` or `gpt` (default: `gemini`)
+
+**Gemini configuration** (when `IMAGE_PROVIDER=gemini`):
 - `GEMINI_API_KEY`: Your Gemini API key (required)
 - `GEMINI_BASE_URL`: Custom API endpoint URL (optional, for proxy or alternative endpoints)
+
+**OpenAI/GPT configuration** (when `IMAGE_PROVIDER=gpt`):
+- `OPENAI_API_KEY`: Your OpenAI API key (required)
+- `OPENAI_BASE_URL`: Custom API endpoint URL (optional, for proxy or alternative endpoints)
 
 ## Supported Aspect Ratios and Resolutions
 

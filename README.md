@@ -1,12 +1,17 @@
-# Gemini Image Generator Skill
+# Image Generator Skill
 
 English | [简体中文](./README_CN.md)
 
-A Claude Code Skill based on Gemini 3 Pro Image API, supporting text-to-image and image-to-image generation across multiple creative domains.
+A Claude Code Skill that supports multiple AI image generation providers (Gemini and OpenAI GPT Image), with text-to-image and image-to-image generation across multiple creative domains. Provider is configured via environment variables.
 
 ## Features
 
 ### Core Capabilities
+
+**Multi-Provider Support**
+- **Gemini 3 Pro Image**: Real-time web search integration, ultra-high resolution up to 6336×2688
+- **OpenAI GPT Image (gpt-image-2)**: High-quality image generation and editing via Image API
+- **Configurable**: Switch providers via `IMAGE_PROVIDER` env variable
 
 **Multi-Domain Support**
 - **Photography**: Portraits, landscapes, scenes with virtual camera settings and lighting control
@@ -22,39 +27,10 @@ A Claude Code Skill based on Gemini 3 Pro Image API, supporting text-to-image an
 
 ### Unique Advantages
 
+- **Multi-Provider**: Switch between Gemini and GPT with a single env variable
 - **Multi-Domain Schema**: Structured JSON prompts tailored for photography, graphic design, and UI design
-- **Ultra-High Resolution**: Supports 1K/2K/4K resolution tiers, up to 6336×2688 pixels
-- **Multiple Aspect Ratios**: 10 aspect ratio options covering various use cases
+- **Flexible Deployment**: Both providers support custom API endpoints for proxy usage
 - **Smart Interaction**: Claude automatically analyzes requirements and guides users through details
-- **Flexible Deployment**: Supports custom API endpoints for proxy usage
-
-### Use Cases
-
-**Photography**
-- Professional portraits and headshots
-- Landscape and scenery photography
-- Product photography with studio lighting
-- Artistic scenes with specific camera settings
-
-**Graphic Design**
-- Website logo design
-- Event posters and flyers
-- Business cards and branding materials
-- Social media graphics and banners
-- Infographic design
-
-**UI/UX Design**
-- Mobile app screen mockups
-- Dashboard and data visualization interfaces
-- Landing page designs
-- Settings and configuration panels
-- Component library design
-
-**Content Creation**
-- Article illustrations
-- Cover images
-- Avatars and personal branding
-- Concept art
 
 ## Supported Aspect Ratios and Resolutions
 
@@ -76,7 +52,7 @@ A Claude Code Skill based on Gemini 3 Pro Image API, supporting text-to-image an
 ### 1. Install Dependencies
 
 ```bash
-pip install -q -U google-genai Pillow python-dotenv
+pip install -q -U google-genai openai Pillow python-dotenv
 ```
 
 ### 2. Configure Environment Variables
@@ -92,40 +68,52 @@ cp .env.example .env
 Edit `.env` with your values:
 
 ```bash
-GEMINI_API_KEY=your-api-key-here
+# Select provider: gemini or gpt
+IMAGE_PROVIDER=gpt
+
+# Gemini configuration (when IMAGE_PROVIDER=gemini)
+GEMINI_API_KEY=your-gemini-api-key-here
 # GEMINI_BASE_URL=https://your-proxy-url.com
-# GEMINI_MODEL=gemini-3-pro-image-preview
+
+# OpenAI/GPT configuration (when IMAGE_PROVIDER=gpt)
+OPENAI_API_KEY=your-openai-api-key-here
+# OPENAI_BASE_URL=https://your-proxy-url.com/v1
+# OPENAI_MODEL=gpt-image-2
 ```
 
 **Method 2: Using system environment variables**
 
 ```bash
-export GEMINI_API_KEY="your-api-key-here"
+# Provider selection
+export IMAGE_PROVIDER="gpt"
 
-# Optional: Custom API endpoint
+# Gemini
+export GEMINI_API_KEY="your-gemini-api-key-here"
 export GEMINI_BASE_URL="https://your-proxy-url.com"
 
-# Optional: Custom model
-export GEMINI_MODEL="gemini-3-pro-image-preview"
+# OpenAI/GPT
+export OPENAI_API_KEY="your-openai-api-key-here"
+export OPENAI_BASE_URL="https://your-proxy-url.com/v1"
 ```
 
 > **Note**: Configuration priority is `.env > system environment variables > default values`
 
 ### 3. Install the Skill
 
-Clone the repository, then copy the `gemini-image-generator` directory to your project's `.claude/skills/` directory:
+Clone the repository, then copy the `image-generator-skill` directory to your project's `.claude/skills/` directory:
 
 ```
 your-project/
 ├── .claude/
 │   └── skills/
-│       └── gemini-image-generator/
+│       └── image-generator-skill/
 │           ├── SKILL.md
-│           ├── README.md
+│           ├── .env.example
 │           ├── scripts/
 │           │   └── generate_image.py
 │           └── references/
-│               └── json_schema_reference.md
+│               ├── json_schema_t2i_reference.md
+│               └── json_schema_i2i_reference.md
 ```
 
 ## Usage
@@ -313,24 +301,25 @@ Reference images + local edits combined:
 
 | Issue | Solution |
 |-------|----------|
-| API Key not found | Ensure `GEMINI_API_KEY` environment variable is set |
+| API Key not found | Ensure corresponding API key env variable is set for your provider |
 | Image generation failed | Check if prompt violates content policy |
 | Poor image quality | Adjust `meta.quality` and `meta.image_size` parameters |
 | Wrong aspect ratio | Check if `meta.aspect_ratio` is a supported value |
+| Proxy connection error | Ensure base URL includes the correct path (e.g., `/v1` for OpenAI proxies) |
 
 ## Directory Structure
 
 ```
-gemini-image-generator/
+image-generator-skill/
 ├── SKILL.md                         # Skill definition file (read by Claude)
-├── README.md                        # English documentation (this file)
+├── README.md                        # English documentation
 ├── README_CN.md                     # Chinese documentation
 ├── .env.example                     # Environment variables template
 ├── scripts/
-│   └── generate_image.py            # Image generation script
+│   └── generate_image.py            # Image generation script (Gemini + GPT)
 └── references/
     ├── json_schema_t2i_reference.md # Complete Text-to-Image JSON reference
-    └── json_schema_i2i_reference.md # Complete Image-to-Image JSON reference (includes Precision Edit Mode)
+    └── json_schema_i2i_reference.md # Complete Image-to-Image JSON reference
 ```
 
 ## License

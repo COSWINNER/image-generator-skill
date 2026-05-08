@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """
-Gemini 3 Pro Image Generation Script
+Image Generation Script (Gemini + OpenAI/GPT)
 
-This script generates images using Gemini 3 Pro Image API.
+This script generates images using either Gemini 3 Pro Image API or OpenAI GPT Image API.
 Supports both text-to-image and image-to-image generation.
 
 Configuration (priority: .env > system environment variables > defaults):
-    GEMINI_API_KEY: Your Gemini API key (required)
-    GEMINI_BASE_URL: Custom base URL for API endpoint (optional)
-    GEMINI_MODEL: Model name for image generation (default: gemini-3-pro-image-preview)
+    IMAGE_PROVIDER: Provider to use - "gemini" or "gpt" (default: gemini)
+
+    Gemini:
+        GEMINI_API_KEY: Your Gemini API key (required when provider=gemini)
+        GEMINI_BASE_URL: Custom base URL for API endpoint (optional)
+        GEMINI_MODEL: Model name for image generation (default: gemini-3-pro-image-preview)
+
+    OpenAI/GPT:
+        OPENAI_API_KEY: Your OpenAI API key (required when provider=gpt)
+        OPENAI_BASE_URL: Custom base URL for API endpoint (optional)
+        OPENAI_MODEL: Model name for image generation (default: gpt-image-2)
 
 Usage:
     python generate_image.py --prompt-json '<json_string>' [--input-images <path1> <path2> ...]
@@ -18,6 +26,7 @@ import os
 import sys
 import json
 import argparse
+import base64
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -43,6 +52,11 @@ except ImportError:
     print("Error: python-dotenv package not installed.")
     print("Please install with: pip install python-dotenv")
     sys.exit(1)
+
+try:
+    import openai
+except ImportError:
+    openai = None
 
 
 def get_env_value(key: str, default: Optional[str] = None) -> Optional[str]:
@@ -82,6 +96,27 @@ def get_client() -> genai.Client:
         client_kwargs["http_options"] = types.HttpOptions(base_url=base_url)
 
     return genai.Client(**client_kwargs)
+
+
+def get_openai_client():
+    """Initialize OpenAI client with environment configuration."""
+    if openai is None:
+        print("Error: openai package not installed.")
+        print("Please install with: pip install -q -U openai")
+        sys.exit(1)
+
+    api_key = get_env_value("OPENAI_API_KEY")
+    if not api_key:
+        print("Error: OPENAI_API_KEY environment variable is not set.")
+        sys.exit(1)
+
+    client_kwargs = {"api_key": api_key}
+
+    base_url = get_env_value("OPENAI_BASE_URL")
+    if base_url:
+        client_kwargs["base_url"] = base_url
+
+    return openai.OpenAI(**client_kwargs)
 
 
 def load_input_images(image_paths: list[str]) -> list:
@@ -669,9 +704,148 @@ def generate_image(
     return ""
 
 
+# ===== GPT/OpenAI Image Generation =====
+
+# Size mapping: (aspect_ratio, image_size) -> GPT pixel size string
+GPT_SIZE_MAP = {
+    ("1:1", "1K"): "1024x1024",
+    ("1:1", "2K"): "2048x2048",
+    ("1:1", "4K"): "4096x4096",
+    ("2:3", "1K"): "864x1296",
+    ("2:3", "2K"): "1728x2592",
+    ("3:2", "1K"): "1296x864",
+    ("3:2", "2K"): "2592x1728",
+    ("3:4", "1K"): "896x1184",
+    ("3:4", "2K"): "1792x2368",
+    ("4:3", "1K"): "1184x896",
+    ("4:3", "2K"): "2368x1792",
+    ("4:5", "1K"): "928x1152",
+    ("4:5", "2K"): "1856x2304",
+    ("5:4", "1K"): "1152x928",
+    ("5:4", "2K"): "2304x1856",
+    ("9:16", "1K"): "768x1376",
+    ("9:16", "2K"): "1536x2752",
+    ("16:9", "1K"): "1376x768",
+    ("16:9", "2K"): "2752x1536",
+    ("21:9", "1K"): "1584x672",
+    ("21:9", "2K"): "3168x1344",
+}
+
+GPT_QUALITY_MAP = {
+    "ultra_photorealistic": "high",
+    "standard": "medium",
+    "raw": "high",
+    "anime_v6": "medium",
+    "3d_render_octane": "high",
+    "oil_painting": "high",
+    "sketch": "low",
+    "pixel_art": "low",
+    "vector_illustration": "medium",
+    "flat_illustration": "medium",
+    "hand_drawn": "low",
+}
+
+
+def map_size_for_gpt(aspect_ratio: str, image_size: str) -> str:
+    """Map Gemini aspect_ratio + image_size to GPT pixel size string."""
+    # Normalize image_size
+    size = image_size.upper() if image_size else "1K"
+
+    # 4K sizes - map to largest valid GPT sizes under constraints
+    if size == "4K":
+        landscape_ratios = ["3:2", "4:3", "5:4", "16:9", "21:9"]
+        if aspect_ratio in landscape_ratios:
+            return "3840x2160"
+        elif aspect_ratio == "1:1":
+            return "4096x4096"
+        else:
+            return "2160x3840"
+
+    key = (aspect_ratio, size)
+    if key in GPT_SIZE_MAP:
+        return GPT_SIZE_MAP[key]
+
+    # Fallback: ensure both dimensions are multiples of 16
+    return "1024x1024"
+
+
+def map_quality_for_gpt(quality: Optional[str]) -> str:
+    """Map Gemini quality value to GPT quality (low/medium/high/auto)."""
+    if not quality:
+        return "auto"
+    return GPT_QUALITY_MAP.get(quality, "auto")
+
+
+def generate_image_gpt(
+    prompt_json: dict,
+    input_images: Optional[list] = None,
+    output_dir: str = "./generation-image"
+) -> str:
+    """Generate image using OpenAI GPT Image API."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    prompt_text = build_prompt_text(prompt_json)
+    print(f"\n--- Generated Prompt ---\n{prompt_text}\n------------------------\n")
+
+    meta = prompt_json.get("meta", {})
+    aspect_ratio = meta.get("aspect_ratio", "1:1")
+    image_size = meta.get("image_size", "1K")
+    quality = map_quality_for_gpt(meta.get("quality"))
+    size = map_size_for_gpt(aspect_ratio, image_size)
+    model = get_env_value("OPENAI_MODEL", "gpt-image-2")
+
+    client = get_openai_client()
+
+    if input_images:
+        # Image-to-image: use edit endpoint
+        print(f"Editing image with {model} (size={size}, quality={quality})...")
+        from io import BytesIO
+        image_files = []
+        for img in input_images:
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            image_files.append(buf)
+
+        result = client.images.edit(
+            model=model,
+            image=image_files if len(image_files) > 1 else image_files[0],
+            prompt=prompt_text,
+            size=size,
+            quality=quality,
+        )
+    else:
+        # Text-to-image: use generate endpoint
+        print(f"Generating image with {model} (size={size}, quality={quality})...")
+        result = client.images.generate(
+            model=model,
+            prompt=prompt_text,
+            size=size,
+            quality=quality,
+        )
+
+    if not result.data:
+        print("Warning: No image data in response.")
+        return ""
+
+    image_base64 = result.data[0].b64_json
+    image_bytes = base64.b64decode(image_base64)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"generated_{timestamp}.png"
+    filepath = output_path / filename
+
+    with open(filepath, "wb") as f:
+        f.write(image_bytes)
+
+    print(f"Image saved to: {filepath}")
+    return str(filepath)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate images using Gemini 3 Pro Image API"
+        description="Generate images using Gemini or OpenAI GPT Image API"
     )
 
     parser.add_argument(
@@ -704,21 +878,30 @@ def main():
         print(f"Error parsing JSON prompt: {e}")
         sys.exit(1)
 
-    # Initialize client
-    client = get_client()
+    # Determine provider
+    provider = get_env_value("IMAGE_PROVIDER", "gemini").lower()
+    print(f"Using image provider: {provider}")
 
     # Load input images if provided
     input_images = None
     if args.input_images:
         input_images = load_input_images(args.input_images)
 
-    # Generate image
-    result = generate_image(
-        client=client,
-        prompt_json=prompt_json,
-        input_images=input_images,
-        output_dir=args.output_dir
-    )
+    # Route to appropriate generator
+    if provider == "gpt":
+        result = generate_image_gpt(
+            prompt_json=prompt_json,
+            input_images=input_images,
+            output_dir=args.output_dir
+        )
+    else:
+        client = get_client()
+        result = generate_image(
+            client=client,
+            prompt_json=prompt_json,
+            input_images=input_images,
+            output_dir=args.output_dir
+        )
 
     if result:
         print(f"\nGeneration complete! Image saved to: {result}")

@@ -1,10 +1,16 @@
-# Gemini Image Generator Skill
+# Image Generator Skill
 
 [English](./README.md) | 简体中文
 
-一个基于 Gemini 3 Pro Image API 的 Claude Code Skill，支持文生图和图生图功能，涵盖多个创意领域。
+一个支持多 AI 提供商（Gemini 和 OpenAI GPT Image）的 Claude Code Skill，支持文生图和图生图功能，涵盖多个创意领域。通过环境变量切换提供商。
 
 ## 功能特性
+
+### 多提供商支持
+
+- **Gemini 3 Pro Image**：集成 Google Search 实时搜索，超高分辨率最高可达 6336×2688
+- **OpenAI GPT Image (gpt-image-2)**：通过 Image API 提供高质量图像生成和编辑
+- **灵活配置**：通过 `IMAGE_PROVIDER` 环境变量切换提供商
 
 ### 核心能力
 
@@ -22,11 +28,10 @@
 
 ### 独特优势
 
+- **多提供商**：一个环境变量即可在 Gemini 和 GPT 之间切换
 - **多领域 Schema**：针对摄影、平面设计、UI 设计定制的结构化 JSON prompt
-- **超高分辨率**：支持 1K/2K/4K 三档分辨率，最高可达 6336×2688 像素
-- **多种宽高比**：支持 10 种宽高比，覆盖各类使用场景
+- **灵活部署**：两个提供商都支持自定义 API 端点，可配合代理使用
 - **智能交互**：Claude 自动分析需求，引导用户完善细节
-- **灵活部署**：支持自定义 API 端点，可配合代理使用
 
 ### 使用场景
 
@@ -76,7 +81,7 @@
 ### 1. 安装依赖
 
 ```bash
-pip install -q -U google-genai Pillow python-dotenv
+pip install -q -U google-genai openai Pillow python-dotenv
 ```
 
 ### 2. 配置环境变量
@@ -92,40 +97,52 @@ cp .env.example .env
 编辑 `.env` 文件填入你的配置：
 
 ```bash
-GEMINI_API_KEY=your-api-key-here
+# 选择提供商：gemini 或 gpt
+IMAGE_PROVIDER=gpt
+
+# Gemini 配置（当 IMAGE_PROVIDER=gemini 时）
+GEMINI_API_KEY=your-gemini-api-key-here
 # GEMINI_BASE_URL=https://your-proxy-url.com
-# GEMINI_MODEL=gemini-3-pro-image-preview
+
+# OpenAI/GPT 配置（当 IMAGE_PROVIDER=gpt 时）
+OPENAI_API_KEY=your-openai-api-key-here
+# OPENAI_BASE_URL=https://your-proxy-url.com/v1
+# OPENAI_MODEL=gpt-image-2
 ```
 
 **方式二：使用系统环境变量**
 
 ```bash
-export GEMINI_API_KEY="your-api-key-here"
+# 提供商选择
+export IMAGE_PROVIDER="gpt"
 
-# 可选：自定义 API 端点
+# Gemini
+export GEMINI_API_KEY="your-gemini-api-key-here"
 export GEMINI_BASE_URL="https://your-proxy-url.com"
 
-# 可选：自定义模型
-export GEMINI_MODEL="gemini-3-pro-image-preview"
+# OpenAI/GPT
+export OPENAI_API_KEY="your-openai-api-key-here"
+export OPENAI_BASE_URL="https://your-proxy-url.com/v1"
 ```
 
 > **注意**：配置优先级为 `.env > 系统环境变量 > 默认值`
 
 ### 3. 安装 Skill
 
-先将代码clone下来，然后将 `gemini-image-generator` 目录复制到你的项目的.claude/skills/ 目录下：
+先将代码 clone 下来，然后将 `image-generator-skill` 目录复制到你的项目的 `.claude/skills/` 目录下：
 
 ```
 your-project/
 ├── .claude/
 │   └── skills/
-│       └── gemini-image-generator/
+│       └── image-generator-skill/
 │           ├── SKILL.md
-│           ├── README.md
+│           ├── .env.example
 │           ├── scripts/
 │           │   └── generate_image.py
 │           └── references/
-│               └── json_schema_reference.md
+│               ├── json_schema_t2i_reference.md
+│               └── json_schema_i2i_reference.md
 ```
 
 ## 使用方法
@@ -162,7 +179,6 @@ Claude 会自动：
 1. 分析你的需求并询问必要的细节（宽高比、分辨率等）
 2. 将需求转换为结构化 JSON 格式
 3. 调用生成脚本生成图片
-
 
 ### 输出位置
 
@@ -314,21 +330,22 @@ Schema 支持三种创意领域：
 
 | 问题 | 解决方案 |
 |------|----------|
-| API Key not found | 确保设置了 `GEMINI_API_KEY` 环境变量 |
+| API Key not found | 确保为所选提供商设置了对应的 API Key 环境变量 |
 | 图片生成失败 | 检查 prompt 是否违反内容策略 |
 | 图片质量不佳 | 调整 `meta.quality` 和 `meta.image_size` 参数 |
 | 宽高比不对 | 检查 `meta.aspect_ratio` 是否为支持的值 |
+| 代理连接失败 | 确保 base URL 包含正确路径（如 OpenAI 代理需包含 `/v1`） |
 
 ## 目录结构
 
 ```
-gemini-image-generator/
+image-generator-skill/
 ├── SKILL.md                         # Skill 定义文件（Claude 读取）
 ├── README.md                        # 英文文档
 ├── README_CN.md                     # 中文文档（本文件）
 ├── .env.example                     # 环境变量模板
 ├── scripts/
-│   └── generate_image.py            # 图片生成脚本
+│   └── generate_image.py            # 图片生成脚本（Gemini + GPT）
 └── references/
     ├── json_schema_t2i_reference.md # 文生图 JSON prompt 完整参考
     └── json_schema_i2i_reference.md # 图生图 JSON prompt 完整参考（含精修模式）
