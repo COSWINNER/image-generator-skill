@@ -29,16 +29,32 @@ Ensure the following dependencies are installed:
 pip install -q -U google-genai openai Pillow python-dotenv
 ```
 
-Environment variables must be set:
+### Environment Configuration (Priority: `.env` file > system env vars > defaults)
+
+**🚨 CRITICAL**: The script reads configuration from the `.env` file FIRST, which OVERRIDES system environment variables. Always configure via the `.env` file as the primary method.
+
+**`.env` file location**: `./.env` (same directory as this `SKILL.md` file)
+
+```bash
+# .env file example (place in the same directory as SKILL.md)
+IMAGE_PROVIDER=gpt
+GEMINI_API_KEY=your_gemini_key
+OPENAI_API_KEY=your_openai_key
+OPENAI_BASE_URL=https://your-proxy.example.com/v1
+```
+
+Configuration variables:
 - `IMAGE_PROVIDER`: Choose provider - `gemini` or `gpt` (default: `gemini`)
 
 **Gemini configuration** (when `IMAGE_PROVIDER=gemini`):
 - `GEMINI_API_KEY`: Your Gemini API key (required)
 - `GEMINI_BASE_URL`: Custom API endpoint URL (optional, for proxy or alternative endpoints)
+- `GEMINI_MODEL`: Model name (optional, default: `gemini-3-pro-image-preview`)
 
 **OpenAI/GPT configuration** (when `IMAGE_PROVIDER=gpt`):
 - `OPENAI_API_KEY`: Your OpenAI API key (required)
 - `OPENAI_BASE_URL`: Custom API endpoint URL (optional, for proxy or alternative endpoints)
+- `OPENAI_MODEL`: Model name (optional, default: `gpt-image-2`)
 
 ## Supported Aspect Ratios and Resolutions
 
@@ -413,7 +429,7 @@ python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --p
 
 ### Common Issues
 
-1. **API Key not found**: Ensure `GEMINI_API_KEY` environment variable is set
+1. **API Key not found**: Ensure the corresponding API key is set in the `.env` file (same directory as `SKILL.md`), e.g. `GEMINI_API_KEY=...` or `OPENAI_API_KEY=...`
 2. **Image not generated**: Check if the prompt violates content policies
 3. **Low quality output**: Adjust quality settings in meta section
 4. **Wrong aspect ratio**: Verify `aspect_ratio` in meta section matches your needs
