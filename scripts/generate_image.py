@@ -132,6 +132,14 @@ def load_input_images(image_paths: list[str]) -> list:
     return images
 
 
+def extract_multi_ref_image_paths(prompt_json: dict) -> list[str]:
+    """Extract image paths from multi_image_reference section."""
+    multi_ref = prompt_json.get("multi_image_reference", {})
+    if multi_ref.get("mode") != "multi_reference":
+        return []
+    return [s["path"] for s in multi_ref.get("reference_sources", []) if "path" in s]
+
+
 def build_prompt_text(prompt_json: dict) -> str:
     """
     Convert structured JSON prompt to natural language prompt.
@@ -142,6 +150,13 @@ def build_prompt_text(prompt_json: dict) -> str:
     # User intent
     if "user_intent" in prompt_json:
         parts.append(prompt_json["user_intent"])
+
+    # Multi-image reference mode (text-driven composition with element extraction)
+    multi_ref = prompt_json.get("multi_image_reference")
+    if multi_ref and multi_ref.get("mode") == "multi_reference":
+        multi_parts = _build_multi_reference_prompt(multi_ref)
+        if multi_parts:
+            parts.extend(multi_parts)
 
     # Get domain, default to photography
     meta = prompt_json.get("meta", {})
@@ -575,11 +590,45 @@ def _build_style_modifiers(style_modifiers: dict) -> str:
     return ""
 
 
+def _build_multi_reference_prompt(multi_ref: dict) -> list[str]:
+    """Build prompt for multi-image reference mode."""
+    parts = []
+    sources = multi_ref.get("reference_sources", [])
+    if not sources:
+        return parts
+
+    parts.append("MULTI-IMAGE COMPOSITING TASK:")
+    parts.append("Create a NEW image combining specific elements extracted from the provided source images. The overall scene is described by text; images provide specific elements to incorporate.")
+
+    parts.append("\nSOURCE IMAGES (provided in order):")
+    for i, source in enumerate(sources, 1):
+        source_id = source.get("id", f"source_{i}")
+        role = source.get("extraction_role", "reference")
+        element = source.get("element_to_extract", "all visual elements")
+        label = source.get("label", source_id)
+        parts.append(f'- Image {i} ("{source_id}" - {role}): Extract {element}.')
+
+    comp = multi_ref.get("composition_plan", {})
+    if comp:
+        parts.append("\nCOMPOSITION INSTRUCTIONS:")
+        if "description" in comp:
+            parts.append(comp["description"])
+        if "spatial_layout" in comp:
+            parts.append(f"SPATIAL LAYOUT: {comp['spatial_layout']}")
+        if "interactions" in comp and comp["interactions"]:
+            parts.append(f"INTERACTIONS: {'; '.join(comp['interactions'])}")
+        if "blending_notes" in comp:
+            parts.append(f"BLENDING: {comp['blending_notes']}")
+
+    return parts
+
+
 def generate_image(
     client: genai.Client,
     prompt_json: dict,
     input_images: Optional[list] = None,
-    output_dir: str = "./generation-image"
+    output_dir: str = "./generation-image",
+    model_override: Optional[str] = None
 ) -> str:
     """
     Generate image using Gemini 3 Pro Image.
@@ -589,6 +638,7 @@ def generate_image(
         prompt_json: Structured JSON prompt
         input_images: Optional list of PIL Image objects for image-to-image
         output_dir: Directory to save generated images
+        model_override: Optional model name to override env config
 
     Returns:
         Path to the generated image file
@@ -632,8 +682,8 @@ def generate_image(
         tools=[{"google_search": {}}]
     )
 
-    # Get model from config (priority: .env > system env > default)
-    model = get_env_value("GEMINI_MODEL", "gemini-3-pro-image-preview")
+    # Get model (priority: CLI override > .env > system env > default)
+    model = model_override or get_env_value("GEMINI_MODEL", "gemini-3-pro-image-preview")
 
     # Generate image
     print(f"Generating image with {model}...")
@@ -779,7 +829,8 @@ def map_quality_for_gpt(quality: Optional[str]) -> str:
 def generate_image_gpt(
     prompt_json: dict,
     input_images: Optional[list] = None,
-    output_dir: str = "./generation-image"
+    output_dir: str = "./generation-image",
+    model_override: Optional[str] = None
 ) -> str:
     """Generate image using OpenAI GPT Image API."""
     output_path = Path(output_dir)
@@ -793,7 +844,7 @@ def generate_image_gpt(
     image_size = meta.get("image_size", "1K")
     quality = map_quality_for_gpt(meta.get("quality"))
     size = map_size_for_gpt(aspect_ratio, image_size)
-    model = get_env_value("OPENAI_MODEL", "gpt-image-2")
+    model = model_override or get_env_value("OPENAI_MODEL", "gpt-image-2")
 
     client = get_openai_client()
 
@@ -869,6 +920,13 @@ def main():
         help="Directory to save generated images (default: ./generation-image)"
     )
 
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Model name to use (overrides env config). Gemini default: gemini-3-pro-image-preview, GPT default: gpt-image-2"
+    )
+
     args = parser.parse_args()
 
     # Load prompt JSON
@@ -887,12 +945,24 @@ def main():
     if args.input_images:
         input_images = load_input_images(args.input_images)
 
+    # Auto-load images from multi_image_reference section in JSON
+    multi_ref_paths = extract_multi_ref_image_paths(prompt_json)
+    if multi_ref_paths and not input_images:
+        input_images = load_input_images(multi_ref_paths)
+    elif multi_ref_paths and input_images:
+        all_paths = list(args.input_images)
+        for p in multi_ref_paths:
+            if p not in all_paths:
+                all_paths.append(p)
+        input_images = load_input_images(all_paths)
+
     # Route to appropriate generator
     if provider == "gpt":
         result = generate_image_gpt(
             prompt_json=prompt_json,
             input_images=input_images,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            model_override=args.model
         )
     else:
         client = get_client()
@@ -900,7 +970,8 @@ def main():
             client=client,
             prompt_json=prompt_json,
             input_images=input_images,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
+            model_override=args.model
         )
 
     if result:

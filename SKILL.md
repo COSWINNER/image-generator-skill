@@ -19,6 +19,11 @@ Generate high-quality images using Gemini 3 Pro Image API or OpenAI GPT Image AP
   - Style transfer
   - Clothing transfer
   - Image editing and enhancement
+- **Multi-Image Reference (多图参考)**: Extract elements from reference images and compose into a new image driven by text
+  - Works with 1-N reference images (even 1 image can use this mode)
+  - Extract characters, backgrounds, objects, styles from different sources
+  - Text controls overall scene composition, spatial layout, and element relationships
+  - Key distinction from I2I: I2I transforms an image (A→A'), Multi-Ref builds a new image from text while incorporating elements from reference(s)
 - **Real-time Search**: Integrated Google Search for real-time web queries, ensuring generated content is based on up-to-date information and accurate references
 
 ## Prerequisites
@@ -100,13 +105,38 @@ When a user requests image generation, Claude should analyze and clarify their i
      * Pose copying
      * Object/scene transformation
 
-2. **🚨 CRITICAL: Reference Image Detection**:
-   - **IF user mentions ANY existing image** (e.g., "像这张图", "参考这个", "based on this", "similar to this image", "用这张图的风格"):
-     * ✅ This is Image-to-image generation
-     * ✅ You MUST include the reference image in `input_image` field
-     * ✅ You MUST pass the image path via `--input-images` parameter
+2. **🚨 CRITICAL: Mode Detection** (determine generation mode):
+
+   **Mode Decision Table** (by what drives creation):
+
+   | Mode | Driver | Trigger | Key Difference |
+   |------|--------|---------|----------------|
+   | T2I | Pure text | No images, all from imagination | Create from scratch |
+   | I2I | Image as primary | "Transform/modify/change this image" | A → A' |
+   | **Multi-Ref** | **Text as primary** | **"Use element from image, create/draw a scene"** | **Text builds scene, images provide elements** |
+
+   **IF user mentions ANY existing image**, determine which mode:
+
+   - **Image-to-Image** — Image is the subject being transformed:
+     * "Transform this into anime style" / "把这张图变成动漫"
+     * "Swap my face into this photo" / "把脸换成我的"
+     * "Change the dress color" / "把衣服改成红色" (partial_edit)
+     * "Make it look like this" / "做成这种风格"
+     * ✅ Include the reference image in `input_image` field
+     * ✅ Pass the image path via `--input-images` parameter
      * ❌ DO NOT just read the image and describe it in text
-     * ❌ DO NOT convert visual elements into text prompts
+
+   - **Multi-Image Reference** — Text drives the scene, images provide elements to incorporate:
+     * 1 image: "用图里的猫，画一个赛博朋克街景" / "Use this cat in a cyberpunk city"
+     * 1 image: "借鉴这张图的配色，画一个海底世界" / "Borrow the color palette for an underwater scene"
+     * 2+ images: "把图A的人放到图B的背景里" / "Put person from A into background B"
+     * 2+ images: "人物来自图A，风格来自图B" / "Character from A, style from B"
+     * ✅ Use `multi_image_reference` section in JSON
+     * ✅ Specify `element_to_extract` and `extraction_role` for each source
+     * ✅ Use `composition_plan` to describe spatial arrangement
+     * ✅ Pass image paths via `--input-images` parameter
+     * ❌ DO NOT just read images and describe them in text
+
    - **Only if user describes a brand new image from imagination**: Use text-to-image
 
 3. **Determine aspect ratio and resolution**:
@@ -158,6 +188,7 @@ Claude converts the clarified user intent to a structured JSON prompt.
 **🚨 IMPORTANT: Use the correct reference document**
 - **For Text-to-Image (文生图)**: Reference `references/json_schema_t2i_reference.md`
 - **For Image-to-Image (图生图)**: Reference `references/json_schema_i2i_reference.md`
+- **For Multi-Image Reference (多图参考)**: Reference `references/json_schema_multi_reference.md`
 
 **Key sections to include** (only include relevant fields):
 
@@ -266,6 +297,51 @@ Claude converts the clarified user intent to a structured JSON prompt.
 }
 ```
 
+**For Multi-Image Reference (多图参考)**, use `multi_image_reference` section:
+
+```json
+{
+  "user_intent": "把图A的人放到图B的山景背景中",
+  "meta": {"aspect_ratio": "16:9", "image_size": "2K"},
+  "multi_image_reference": {
+    "mode": "multi_reference",
+    "reference_sources": [
+      {
+        "id": "source_A",
+        "path": "./person.jpg",
+        "label": "人物来源",
+        "element_to_extract": "站立的女性，包括面部特征和整体外观",
+        "extraction_role": "character_source",
+        "strength": 0.85
+      },
+      {
+        "id": "source_B",
+        "path": "./landscape.jpg",
+        "label": "背景来源",
+        "element_to_extract": "山脉湖泊的日落景观",
+        "extraction_role": "background_source",
+        "strength": 0.75
+      }
+    ],
+    "composition_plan": {
+      "description": "将女性放在画面中心前景，山脉湖泊作为全宽背景",
+      "spatial_layout": "前景：人物居中；背景：山湖全景",
+      "blending_notes": "匹配人物与背景的光照方向"
+    }
+  },
+  "scene": {
+    "lighting": {"type": "natural", "direction": "backlight"}
+  }
+}
+```
+
+**Multi-Ref key points**:
+- `reference_sources`: 1-5 images, each with `extraction_role` (character_source, background_source, style_source, object_source, color_source, pose_source, architecture_source, clothing_source)
+- `element_to_extract`: Be specific about what to extract from each image
+- `composition_plan`: Describe how elements combine spatially — this is the most important part
+- `strength`: 0.5-0.95, higher = more faithful reproduction of the extracted element
+- Other fields (scene, style_modifiers, etc.) still apply as normal
+
 **Important guidelines**:
 - Only include fields relevant to the user's request
 - Do not add unnecessary optional fields
@@ -296,6 +372,12 @@ python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --p
 
 ```bash
 python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --prompt-json '{"user_intent":"..."}' --input-images ./input1.jpg ./input2.jpg
+```
+
+#### For Multi-Image Reference
+
+```bash
+python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --prompt-json '{"user_intent":"...","multi_image_reference":{"mode":"multi_reference","reference_sources":[...],"composition_plan":{...}}}' --input-images ./person.jpg ./landscape.jpg
 ```
 
 #### Custom Output Directory
@@ -411,6 +493,92 @@ python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --p
 }
 ```
 
+### Example 5: Multi-Image Reference — Single Image Element Extraction
+
+**User**: "用这张图里的猫，画一个赛博朋克风格的街景"
+
+**Claude's Analysis**:
+1. This is Multi-Ref mode: text builds the cyberpunk scene, image provides the cat element
+2. Ask: "What aspect ratio? How realistic? Should the cat be walking, sitting, or doing something specific?"
+
+**JSON**:
+```json
+{
+  "user_intent": "A cat walking through a neon-lit cyberpunk street at night",
+  "meta": {"aspect_ratio": "16:9", "image_size": "2K", "quality": "ultra_photorealistic"},
+  "multi_image_reference": {
+    "mode": "multi_reference",
+    "reference_sources": [
+      {
+        "id": "cat_source",
+        "path": "./my_cat.jpg",
+        "label": "猫咪来源",
+        "element_to_extract": "the cat including fur pattern, body shape, and facial features",
+        "extraction_role": "character_source",
+        "strength": 0.85
+      }
+    ],
+    "composition_plan": {
+      "description": "The cat walking down the middle of a wet cyberpunk street, neon signs and holographic advertisements, rain reflecting neon on wet pavement",
+      "spatial_layout": "Cat in center foreground, cyberpunk street stretching into background"
+    }
+  },
+  "style_modifiers": {"aesthetic": ["cyberpunk", "neon_noir"]}
+}
+```
+
+**Execute**:
+```bash
+python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --prompt-json '...' --input-images ./my_cat.jpg
+```
+
+### Example 6: Multi-Image Reference — Character + Background
+
+**User**: "把这张人物照片放到那个风景背景里"
+
+**Claude's Analysis**:
+1. Multi-Ref mode: extract person from image A, extract background from image B
+2. Auto-detect aspect ratio from images, ask user for resolution preference
+
+**JSON**:
+```json
+{
+  "user_intent": "Place the person in front of the mountain landscape",
+  "meta": {"aspect_ratio": "16:9", "image_size": "2K", "quality": "ultra_photorealistic"},
+  "multi_image_reference": {
+    "mode": "multi_reference",
+    "reference_sources": [
+      {
+        "id": "person_source",
+        "path": "./portrait.jpg",
+        "label": "人物来源",
+        "element_to_extract": "the standing person including facial features, hairstyle, body proportions",
+        "extraction_role": "character_source",
+        "strength": 0.85
+      },
+      {
+        "id": "bg_source",
+        "path": "./landscape.jpg",
+        "label": "背景来源",
+        "element_to_extract": "the mountain landscape with a lake",
+        "extraction_role": "background_source",
+        "strength": 0.80
+      }
+    ],
+    "composition_plan": {
+      "description": "Person standing on the lakeside, facing mountains, landscape filling the background",
+      "spatial_layout": "Person left-center foreground, mountain lake full background",
+      "blending_notes": "Match natural daylight direction on person to landscape lighting"
+    }
+  }
+}
+```
+
+**Execute**:
+```bash
+python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --prompt-json '...' --input-images ./portrait.jpg ./landscape.jpg
+```
+
 ## Resources
 
 ### scripts/
@@ -424,6 +592,7 @@ python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --p
 
 - `json_schema_t2i_reference.md`: Text-to-Image (T2I) complete reference - for generating images from scratch
 - `json_schema_i2i_reference.md`: Image-to-Image (I2I) complete reference - for transforming existing images
+- `json_schema_multi_reference.md`: Multi-Image Reference (多图参考) complete reference - for extracting elements from reference images and composing into text-driven scenes
 
 ## Troubleshooting
 

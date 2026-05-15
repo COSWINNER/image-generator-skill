@@ -25,6 +25,11 @@
   - 全图转换：人脸身份保持、姿势迁移、风格迁移、服装迁移
   - **精修模式 (partial_edit)**：局部精确修改，多条修改指令
   - **混合模式**：参考图 + 局部修改同时进行
+- **多图参考 (Multi-Image Reference)**：从参考图中提取元素，以文字为主体构建全新画面
+  - 支持 1-N 张参考图（单张图也可提取元素用于新场景）
+  - 提取人物、背景、物体、风格、配色等不同元素
+  - 文字控制整体画面构图和空间关系
+  - 与图生图的区别：文字构建场景，图片提供元素融入
 
 ### 独特优势
 
@@ -142,7 +147,8 @@ your-project/
 │           │   └── generate_image.py
 │           └── references/
 │               ├── json_schema_t2i_reference.md
-│               └── json_schema_i2i_reference.md
+│               ├── json_schema_i2i_reference.md
+│               └── json_schema_multi_reference.md
 ```
 
 ## 使用方法
@@ -189,6 +195,7 @@ Claude 会自动：
 完整的 JSON prompt 结构参考 `references/` 目录下的文档：
 - `json_schema_t2i_reference.md` - 文生图完整参考
 - `json_schema_i2i_reference.md` - 图生图完整参考（含精修模式）
+- `json_schema_multi_reference.md` - 多图参考完整参考（提取元素，文字构建场景）
 
 Schema 支持三种创意领域：
 
@@ -326,6 +333,43 @@ Schema 支持三种创意领域：
 }
 ```
 
+### 多图参考 (Multi-Image Reference)
+
+从参考图中提取元素，以文字为主体构建全新画面：
+
+```json
+{
+  "user_intent": "把人物放到山景背景中",
+  "meta": {"aspect_ratio": "16:9", "image_size": "2K"},
+  "multi_image_reference": {
+    "mode": "multi_reference",
+    "reference_sources": [
+      {
+        "id": "person_source",
+        "path": "./portrait.jpg",
+        "label": "人物来源",
+        "element_to_extract": "站立的人物，包括面部特征和身材比例",
+        "extraction_role": "character_source",
+        "strength": 0.85
+      },
+      {
+        "id": "bg_source",
+        "path": "./landscape.jpg",
+        "label": "背景来源",
+        "element_to_extract": "山脉湖泊景观",
+        "extraction_role": "background_source",
+        "strength": 0.80
+      }
+    ],
+    "composition_plan": {
+      "description": "人物站在湖边，面朝群山，山脉湖泊作为全幅背景",
+      "spatial_layout": "人物在左侧前景居中，山湖景观填满背景",
+      "blending_notes": "匹配人物与背景的自然光线方向"
+    }
+  }
+}
+```
+
 ## 常见问题
 
 | 问题 | 解决方案 |
@@ -348,7 +392,8 @@ image-generator-skill/
 │   └── generate_image.py            # 图片生成脚本（Gemini + GPT）
 └── references/
     ├── json_schema_t2i_reference.md # 文生图 JSON prompt 完整参考
-    └── json_schema_i2i_reference.md # 图生图 JSON prompt 完整参考（含精修模式）
+    ├── json_schema_i2i_reference.md # 图生图 JSON prompt 完整参考（含精修模式）
+    └── json_schema_multi_reference.md # 多图参考 JSON prompt 完整参考
 ```
 
 ## License

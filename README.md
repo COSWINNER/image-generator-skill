@@ -24,6 +24,11 @@ A Claude Code Skill that supports multiple AI image generation providers (Gemini
   - Full image transform: Face identity, pose transfer, style transfer, clothing transfer
   - **Precision Edit Mode (partial_edit)**: Local precise modifications with multiple edit commands
   - **Hybrid Mode**: Reference images + local edits combined
+- **Multi-Image Reference (多图参考)**: Extract elements from reference images and compose into a new text-driven scene
+  - Works with 1-N reference images (even a single image can extract an element for a new scene)
+  - Extract characters, backgrounds, objects, styles, colors from different sources
+  - Text controls overall scene composition and spatial relationships
+  - Distinct from I2I: text builds the scene, images provide elements to incorporate
 
 ### Unique Advantages
 
@@ -113,7 +118,8 @@ your-project/
 │           │   └── generate_image.py
 │           └── references/
 │               ├── json_schema_t2i_reference.md
-│               └── json_schema_i2i_reference.md
+│               ├── json_schema_i2i_reference.md
+│               └── json_schema_multi_reference.md
 ```
 
 ## Usage
@@ -160,6 +166,7 @@ Generated images are saved by default in the `./generation-image/` directory wit
 For the complete JSON prompt structure, refer to the documents in `references/`:
 - `json_schema_t2i_reference.md` - Complete Text-to-Image reference
 - `json_schema_i2i_reference.md` - Complete Image-to-Image reference (includes Precision Edit Mode)
+- `json_schema_multi_reference.md` - Complete Multi-Image Reference reference (extract elements from images, compose with text)
 
 The schema supports three creative domains:
 
@@ -297,6 +304,43 @@ Reference images + local edits combined:
 }
 ```
 
+### Multi-Image Reference
+
+Extract elements from reference images and compose into a text-driven scene:
+
+```json
+{
+  "user_intent": "Place the person in front of the mountain landscape",
+  "meta": {"aspect_ratio": "16:9", "image_size": "2K"},
+  "multi_image_reference": {
+    "mode": "multi_reference",
+    "reference_sources": [
+      {
+        "id": "person_source",
+        "path": "./portrait.jpg",
+        "label": "Person",
+        "element_to_extract": "the person including facial features and body proportions",
+        "extraction_role": "character_source",
+        "strength": 0.85
+      },
+      {
+        "id": "bg_source",
+        "path": "./landscape.jpg",
+        "label": "Background",
+        "element_to_extract": "the mountain landscape with a lake",
+        "extraction_role": "background_source",
+        "strength": 0.80
+      }
+    ],
+    "composition_plan": {
+      "description": "Person standing on lakeside, facing mountains, landscape as full background",
+      "spatial_layout": "Person left-center foreground, mountain lake full background",
+      "blending_notes": "Match daylight direction between person and landscape"
+    }
+  }
+}
+```
+
 ## FAQ
 
 | Issue | Solution |
@@ -319,7 +363,8 @@ image-generator-skill/
 │   └── generate_image.py            # Image generation script (Gemini + GPT)
 └── references/
     ├── json_schema_t2i_reference.md # Complete Text-to-Image JSON reference
-    └── json_schema_i2i_reference.md # Complete Image-to-Image JSON reference
+    ├── json_schema_i2i_reference.md # Complete Image-to-Image JSON reference
+    └── json_schema_multi_reference.md # Complete Multi-Image Reference JSON reference
 ```
 
 ## License
