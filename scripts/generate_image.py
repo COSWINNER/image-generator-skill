@@ -185,6 +185,21 @@ def build_prompt_text(prompt_json: dict) -> str:
     if "advanced" in prompt_json and "negative_prompt" in prompt_json["advanced"]:
         negative_items.extend(prompt_json["advanced"]["negative_prompt"])
 
+    advanced = prompt_json.get("advanced", {})
+
+    if domain == "photography":
+        photo_excludes = ["blur", "watermark", "text overlay", "plastic skin", "airbrushing", "bad hands", "deformed fingers", "low quality"]
+        negative_items.extend(photo_excludes)
+
+        subjects = prompt_json.get("subject", [])
+        has_person_subject = any(subj.get("type", "person") == "person" for subj in subjects)
+        has_skin_texture = any("skin_texture" in subj for subj in subjects)
+        if advanced.get("auto_skin_texture", True) and has_person_subject and not has_skin_texture:
+            parts.append("realistic skin texture, visible pores, natural imperfections")
+
+        if advanced.get("auto_film_aesthetic", True) and has_person_subject and "technical" not in prompt_json:
+            parts.append("photorealistic camera capture, natural lens rendering, subtle film aesthetic")
+
     # Domain-specific automatic negative prompts
     if domain == "ui_design":
         # For UI design, exclude device frames, monitors, screens to get pure UI
@@ -197,6 +212,7 @@ def build_prompt_text(prompt_json: dict) -> str:
             negative_items.extend(gd_excludes)
 
     if negative_items:
+        negative_items = list(dict.fromkeys(negative_items))
         parts.append(f"Avoid: {', '.join(negative_items)}")
 
     return "\n".join(parts)
@@ -226,6 +242,9 @@ def _build_photography_prompt(prompt_json: dict) -> list[str]:
             if "gender" in subj:
                 subj_desc.append(f", {subj['gender']}")
 
+            if "body_type" in subj:
+                subj_desc.append(f", {subj['body_type']}")
+
             if "hair" in subj:
                 hair = subj["hair"]
                 hair_desc = []
@@ -242,6 +261,12 @@ def _build_photography_prompt(prompt_json: dict) -> list[str]:
             if "expression" in subj:
                 subj_desc.append(f", {subj['expression']} expression")
 
+            if "gaze" in subj:
+                subj_desc.append(f", {subj['gaze']}")
+
+            if "skin_texture" in subj:
+                subj_desc.append(f", {subj['skin_texture']}")
+
             if "position" in subj:
                 subj_desc.append(f", positioned {subj['position'].replace('_', ' ')}")
 
@@ -256,6 +281,14 @@ def _build_photography_prompt(prompt_json: dict) -> list[str]:
                         cloth_desc.append(item["fabric"])
                     if "item" in item:
                         cloth_desc.append(item["item"])
+                    if "fit" in item:
+                        cloth_desc.append(f"({item['fit']})")
+                    if "texture" in item:
+                        cloth_desc.append(f"with {item['texture']}")
+                    if "drape" in item:
+                        cloth_desc.append(f"with {item['drape']}")
+                    if "pattern" in item:
+                        cloth_desc.append(f"{item['pattern']} pattern")
                     if cloth_desc:
                         clothes.append(" ".join(cloth_desc))
                 if clothes:
@@ -301,11 +334,31 @@ def _build_photography_prompt(prompt_json: dict) -> list[str]:
                 light_parts.append(lighting["type"].replace("_", " "))
             if "direction" in lighting:
                 light_parts.append(lighting["direction"].replace("_", " "))
+            if "color_temperature" in lighting:
+                light_parts.append(lighting["color_temperature"].replace("_", " "))
+            if "mood" in lighting:
+                light_parts.append(lighting["mood"].replace("_", " "))
+            if "specular_highlights" in lighting:
+                light_parts.append(f"specular highlights: {lighting['specular_highlights']}")
+            if "shadow_style" in lighting:
+                light_parts.append(f"shadows: {lighting['shadow_style'].replace('_', ' ')}")
             if light_parts:
                 scene_desc.append(f"Lighting: {', '.join(light_parts)}")
 
+        if "foreground_elements" in scene:
+            scene_desc.append(f"Foreground: {scene['foreground_elements']}")
+
+        if "midground" in scene:
+            scene_desc.append(f"Midground: {scene['midground']}")
+
         if "background_elements" in scene:
             scene_desc.append(f"Background: {', '.join(scene['background_elements'])}")
+
+        if "atmosphere" in scene:
+            scene_desc.append(f"Atmosphere: {scene['atmosphere']}")
+
+        if "depth_of_field" in scene:
+            scene_desc.append(f"DOF: {scene['depth_of_field']}")
 
         if scene_desc:
             parts.append("Scene: " + "; ".join(scene_desc))
@@ -326,6 +379,15 @@ def _build_photography_prompt(prompt_json: dict) -> list[str]:
 
         if "film_stock" in tech:
             tech_desc.append(f"{tech['film_stock']} film look")
+
+        if "filter_effect" in tech:
+            tech_desc.append(tech["filter_effect"])
+
+        if "color_grade" in tech:
+            tech_desc.append(tech["color_grade"])
+
+        if "film_grain" in tech:
+            tech_desc.append(tech["film_grain"])
 
         if tech_desc:
             parts.append("Technical: " + ", ".join(tech_desc))
@@ -439,11 +501,23 @@ def _build_graphic_design_prompt(prompt_json: dict) -> list[str]:
     if "elements" in gd:
         elements_desc = []
         for elem in gd["elements"]:
-            elem_desc = f"{elem['type'].replace('_', ' ')}"
+            elem_desc = elem.get("type", "element").replace("_", " ")
             if "content" in elem:
                 elem_desc += f" '{elem['content']}'"
             if "style" in elem:
                 elem_desc += f" ({elem['style'].replace('_', ' ')})"
+            if "font_style" in elem:
+                elem_desc += f" [font: {elem['font_style'].replace('_', ' ')}]"
+            if "color" in elem:
+                elem_desc += f" [color: {elem['color'].replace('_', ' ')}]"
+            if "background_shape" in elem:
+                elem_desc += f" [on {elem['background_shape'].replace('_', ' ')}]"
+            if "brand_label" in elem:
+                elem_desc += f" [brand: {elem['brand_label']}]"
+            if "headline" in elem:
+                elem_desc += f" [headline: {elem['headline']}]"
+            if "tagline" in elem:
+                elem_desc += f" [tagline: {elem['tagline']}]"
             if "placement" in elem:
                 elem_desc += f" [{elem['placement'].replace('_', ' ')}]"
             elements_desc.append(elem_desc)
@@ -615,6 +689,12 @@ def _build_multi_reference_prompt(multi_ref: dict) -> list[str]:
             parts.append(comp["description"])
         if "spatial_layout" in comp:
             parts.append(f"SPATIAL LAYOUT: {comp['spatial_layout']}")
+        if "camera_perspective" in comp:
+            parts.append(f"CAMERA PERSPECTIVE: {comp['camera_perspective']}")
+        if "lighting_consistency" in comp:
+            parts.append(f"LIGHTING CONSISTENCY: {comp['lighting_consistency']}")
+        if "scale_relationships" in comp:
+            parts.append(f"SCALE RELATIONSHIPS: {comp['scale_relationships']}")
         if "interactions" in comp and comp["interactions"]:
             parts.append(f"INTERACTIONS: {'; '.join(comp['interactions'])}")
         if "blending_notes" in comp:

@@ -441,9 +441,12 @@ The `edits` field contains **nested edit instructions** grouped by element:
 |-------------|-------------------|
 | `clothing` | color, style, material, pattern |
 | `face` | expression, makeup, age |
+| `skin` | tone, texture, glow |
 | `hair` | color, style, length |
 | `body` | pose, posture |
 | `background` | blur, color, scene |
+| `environment` | add_element, remove_element, change_scene |
+| `accessories` | add, remove, change_material |
 | `lighting` | type, direction, intensity |
 
 ### Graphic Design
@@ -454,7 +457,8 @@ The `edits` field contains **nested edit instructions** grouped by element:
 | `text_elements` | text_content, font_style, color |
 | `color_scheme` | palette, primary, secondary |
 | `images` | replace_with, adjust |
-| `layout` | position, alignment, spacing |
+| `layout` | position, alignment, spacing, grid_system, balance |
+| `illustration` | style, detail_level, color_palette |
 
 ### UI Design
 

@@ -105,6 +105,54 @@ When a user requests image generation, Claude should analyze and clarify their i
      * Pose copying
      * Object/scene transformation
 
+#### Domain-Specific Clarification Dimensions
+
+When analyzing user intent, Claude MUST use the relevant domain checklist below. Do not ask every item mechanically; fill reasonable high-quality defaults for unspecified details when the user's intent is already clear.
+
+**Photography / Portrait — 9 dimensions**:
+
+| # | Dimension | What to clarify or infer | High-value examples |
+|---|-----------|--------------------------|---------------------|
+| 1 | Camera/Film | Camera body, film stock, capture style | `Sony A7R IV`, `Leica M6`, `35mm film`, `CineStill 800T`, `Fujifilm Pro 400H`, `CCD camera` |
+| 2 | Filter/Grade | Filter, color grade, grain | `soft black mist filter`, `pastel low contrast`, `warm vintage grade`, `authentic 35mm grain` |
+| 3 | Lighting | Type, direction, temperature, shadows | `diffused window light`, `harsh direct flash`, `golden hour`, `neon rim light`, `soft falloff` |
+| 4 | Subject Appearance | Face/body/skin details | `visible skin texture`, `subtle freckles`, `dewy glow`, `almond-shaped eyes`, `slim athletic build` |
+| 5 | Clothing Material | Fabric, fit, texture, drape | `oversized white cotton shirt`, `soft wrinkles`, `natural drape`, `ribbed knit texture` |
+| 6 | Pose/Action | Body position and dynamics | `leaning against a door frame`, `one leg bent`, `sitting with one leg tucked` |
+| 7 | Expression/Gaze | Eye direction, mouth, emotion | `looking directly at viewer`, `soft doe-eyed gaze`, `lips slightly parted`, `subtle smile` |
+| 8 | Environment/Background | Foreground, midground, background layers | `blurred drink bottles in foreground`, `convenience store shelves`, `neon refrigerator lights` |
+| 9 | Exclusions | Things to avoid | `no plastic skin`, `no airbrushing`, `no watermark`, `no text overlay`, `no bad hands` |
+
+**Graphic Design / Poster — WHAT / FEEL / SHOW / TYPE / TECH**:
+
+| Section | What to clarify or infer |
+|---------|--------------------------|
+| WHAT | Main subject, product, event, city, abstract concept, or information topic |
+| FEEL | Mood and atmosphere: elegant, playful, luxurious, cyberpunk, Chinese aesthetic, editorial |
+| SHOW | Composition and layout: grid, freeform, golden ratio, foreground/background, focal hierarchy |
+| TYPE | Required text: headline, slogan, brand label, CTA, Chinese/English copy |
+| TECH | Rendering style: vector, print poster, hand-drawn illustration, photoreal product render, paper texture |
+
+**UI Design**:
+
+| Dimension | What to clarify or infer |
+|-----------|--------------------------|
+| Platform | Mobile app, dashboard, landing page, web app, component mockup |
+| Theme | Dark mode, light mode, glassmorphism, minimal, enterprise, playful |
+| Design system | Apple HIG, Material Design, Tailwind-style, custom brand system |
+| Components | Cards, charts, navigation, inputs, buttons, tables, empty states |
+| Color accent | Primary brand color and supporting semantic colors |
+
+**E-commerce / Product Advertising**:
+
+| Dimension | What to clarify or infer |
+|-----------|--------------------------|
+| Product and brand | Product name, brand label, category, packaging |
+| Hero shot angle | Studio product shot, lifestyle scene, macro detail, flat lay, tilted hero object |
+| Text/labels | Headline, tagline, price, discount badge, feature callouts |
+| Color theme | Brand color, accent color, seasonal palette |
+| Background | White studio, marble, paper texture, kitchen, bathroom, outdoor lifestyle scene |
+
 2. **🚨 CRITICAL: Mode Detection** (determine generation mode):
 
    **Mode Decision Table** (by what drives creation):
@@ -144,13 +192,12 @@ When a user requests image generation, Claude should analyze and clarify their i
    - **For image-to-image**: Automatically select the closest matching aspect ratio based on the source image dimensions. For multiple input images, use the primary/main image as reference. If user explicitly specifies a different aspect ratio, use the user's preference instead.
    - **🚨 CRITICAL: image_size selection**: If user does NOT explicitly specify `image_size`, Claude MUST ask the user to choose between `1K`, `2K`, or `4K` ONLY. No other options are allowed. DO NOT suggest or accept any other values.
 
-4. **Clarify unclear aspects** by asking the user about:
-   - **Subject details**: Who or what is the main subject?
-   - **Scene/setting**: Where does this take place?
-   - **Style/aesthetic**: Realistic? Artistic? Specific style (cyberpunk, anime, etc.)?
-   - **Composition**: Close-up? Full body? Wide shot?
-   - **Technical aspects**: Any specific camera look or film style?
-   - **Special requirements**: Text in image? Specific poses? Multiple subjects?
+4. **Clarify unclear aspects** using the domain-specific dimensions above:
+   - **Photography/portrait**: Cover the 9-dimension checklist, especially camera/film, lighting, pose, gaze, skin/material texture, and exclusions
+   - **Graphic design/poster**: Use the WHAT / FEEL / SHOW / TYPE / TECH framework
+   - **UI design**: Cover platform, theme, design system, key components, and color accent
+   - **E-commerce/product advertising**: Cover product/brand, hero shot angle, text labels, color theme, and background
+   - Do not ask about every dimension if the intent is clear; infer tasteful defaults and encode them in JSON
 
 5. **For image-to-image**, additionally clarify:
    - Which input images to use?
@@ -348,6 +395,43 @@ Claude converts the clarified user intent to a structured JSON prompt.
 - For image-to-image, include `input_image` in the subject
 - `aspect_ratio`: One of `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`
 - `image_size`: One of `1K`, `2K`, `4K` (default: `1K`)
+
+### Prompt Enhancement Rules (CRITICAL)
+
+When converting user intent to JSON, Claude MUST apply these rules to improve image quality and preserve useful structure:
+
+1. **Specificity over abstraction**
+   - Bad: `"expression": "happy"`
+   - Good: `"expression": "soft smile, lips slightly parted, gentle warmth in eyes"`
+   - Bad: `"lighting": {"type": "natural"}`
+   - Good: `"lighting": {"type": "diffused natural window light", "direction": "from left side", "color_temperature": "warm golden", "shadow_style": "soft falloff"}`
+   - Bad: `"clothing": [{"item": "shirt"}]`
+   - Good: `"clothing": [{"item": "oversized button-up shirt", "color": "white", "fabric": "cotton", "fit": "loosely tied at waist", "texture": "soft wrinkles", "drape": "natural relaxed drape"}]`
+
+2. **Lighting is the first quality lever**
+   - Prefer lighting objects that include `type`, `direction`, `color_temperature`, `mood`, `specular_highlights`, and `shadow_style` when relevant.
+   - For portraits, describe how light touches skin, eyes, hair, and background separation.
+
+3. **Layer the environment**
+   - Prefer `foreground_elements`, `midground`, and `background_elements` over a single flat location when the scene matters.
+   - Mention blur/depth with `depth_of_field` if the image should feel photographic.
+
+4. **Add realistic texture**
+   - For people, include `skin_texture` such as `visible pores, natural micro-details, subtle imperfections, no airbrushing` unless the user requests stylized/anime output.
+   - For clothing and products, include material, fit, texture, drape, reflections, grain, or surface finish.
+
+5. **Always include useful exclusions**
+   - Photography default: `blur`, `low quality`, `bad hands`, `deformed fingers`, `watermark`, `text overlay`, `plastic skin`, `airbrushing`.
+   - Graphic design default: `blurry`, `low resolution`, `watermark`, `cluttered layout`.
+   - UI default: `device frame`, `monitor`, `physical device`, `screen reflection`.
+
+6. **Preserve Chinese descriptions**
+   - If the user's intent is in Chinese, keep Chinese details in `user_intent`, `description`, text content, cultural aesthetics, food/city names, and layout requirements.
+   - Do not translate culturally specific Chinese concepts unless the user asks.
+
+7. **Use camera/film aesthetics for photography**
+   - For photographic output, include a `technical` section with `camera_model`, `lens`, `film_stock`, `filter_effect`, or `color_grade` when the user did not provide a conflicting style.
+   - Good defaults include `35mm lens`, `Sony A7R IV`, `Leica M6`, `Kodak Portra 400`, `CineStill 800T`, `Fujifilm Pro 400H`, and `soft black mist filter`.
 
 ### Step 3: Generate Image
 

@@ -59,11 +59,14 @@ Array of characters or objects. Each subject can have:
 | `name` | string | Famous character/person name |
 | `age` | string | Age description |
 | `gender` | string | `male`, `female`, `non-binary`, `androgynous` |
+| `body_type` | string | Body/build description, e.g., `slim athletic build`, `curvy hourglass`, `broad-shouldered` |
+| `skin_texture` | string | Skin rendering instruction, e.g., `visible pores and micro-details, natural dewy glow, no airbrushing` |
+| `gaze` | string | Eye direction and emotional quality, e.g., `looking directly at viewer with soft doe eyes` |
 | `hair` | object | Hair style and color |
 | `position` | string | `center`, `left`, `right`, `far_left`, `far_right`, `background`, `foreground` |
 | `pose` | string | Action/pose description |
 | `expression` | string | Facial expression |
-| `clothing` | array | Garments worn |
+| `clothing` | array | Garments worn; supports `item`, `color`, `fabric`, `fit`, `texture`, `drape`, `pattern` |
 | `accessories` | array | Jewelry, bags, eyewear, etc. |
 | `input_image` | object | Reference image for image-to-image |
 
@@ -96,8 +99,12 @@ Environment settings.
 | `location` | string | Setting description (e.g., "tokyo street", "mars colony") |
 | `time` | string | `golden_hour`, `blue_hour`, `high_noon`, `midnight`, `sunrise`, `sunset`, `twilight`, `pitch_black` |
 | `weather` | string | `clear_skies`, `overcast`, `rainy`, `stormy`, `snowing`, `foggy`, `hazy`, `sandstorm`, `acid_rain` |
-| `lighting` | object | Lighting type and direction |
+| `lighting` | object | Lighting type and direction; recommended sub-fields: `type`, `direction`, `color_temperature`, `mood`, `specular_highlights`, `shadow_style` |
+| `foreground_elements` | string | Elements closest to camera, e.g., `blurred drink bottles near camera` |
+| `midground` | string | Main subject zone or middle layer description |
 | `background_elements` | array | Background items (e.g., "flying cars", "cherry blossoms") |
+| `atmosphere` | string | Overall mood, e.g., `intimate late-night convenience store`, `dreamy ethereal fog` |
+| `depth_of_field` | string | Bokeh/DOF instruction, e.g., `shallow f/1.8 bokeh`, `deep focus, everything sharp` |
 
 ### technical
 
@@ -110,7 +117,10 @@ Camera/photography settings.
 | `aperture` | string | `f/1.2` (bokeh) to `f/16` (sharp) |
 | `shutter_speed` | string | `1/8000` (freeze) to `long_exposure_bulb` |
 | `iso` | string | `100` (clean) to `12800` (grainy) |
-| `film_stock` | string | `Kodak Portra 400`, `CineStill 800T`, etc. |
+| `film_stock` | string | `Kodak Portra 400`, `CineStill 800T`, `Fujifilm Pro 400H`, `Kodak Gold 200`, `Ilford HP5`, `Kodak Ektar 100`, `Portra 800`, etc. |
+| `filter_effect` | string | Post-processing filter, e.g., `soft black mist filter`, `CCD camera harsh flash`, `vintage warm grade` |
+| `color_grade` | string | Color grading style, e.g., `pastel low contrast`, `high contrast neon`, `warm film shift` |
+| `film_grain` | string | Grain/noise description, e.g., `authentic 35mm grain`, `fine subtle grain`, `heavy CCD noise` |
 
 ### composition
 
@@ -209,6 +219,12 @@ Each element can have:
 | `content` | string | Text content or description |
 | `style` | string | Style description |
 | `placement` | string | Position in layout (e.g., "top_left", "center", "bottom_right") |
+| `font_style` | string | Text style, e.g., `ultra-bold condensed sans serif`, `elegant serif`, `handwritten brush` |
+| `color` | string | Element or text color |
+| `background_shape` | string | Shape behind text or content, e.g., `rounded orange badge`, `paper label`, `sticker burst` |
+| `headline` | string | Main advertising headline |
+| `tagline` | string | Supporting slogan or product promise |
+| `brand_label` | string | Brand/product label to render or imply |
 
 #### visual_style Options
 
@@ -339,7 +355,9 @@ Fine-tuning options.
 | Field | Type | Description |
 |-------|------|-------------|
 | `negative_prompt` | array | Elements to exclude (e.g., "blur", "low quality", "bad hands") |
-| `magic_prompt_enhancer` | boolean | AI expands prompt with adjectives |
+| `magic_prompt_enhancer` | boolean | When true, Claude should expand the JSON during prompt construction with richer concrete details; the script does not call an extra LLM |
+| `auto_skin_texture` | boolean | Auto-add realistic skin texture hints for photography when not explicitly provided (default: true) |
+| `auto_film_aesthetic` | boolean | Auto-add camera/film aesthetic hints for photography when technical settings are absent (default: true) |
 | `hdr_mode` | boolean | High Dynamic Range balancing |
 
 ## Example Prompts

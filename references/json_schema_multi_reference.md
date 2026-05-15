@@ -110,8 +110,11 @@ Multi-Image Reference is NOT defined by the number of images. Even **1 image** c
 |-------|------|----------|-------------|
 | `description` | string | ✅ Yes | Complete description of how elements should be combined in the final image |
 | `spatial_layout` | string | No | Explicit spatial arrangement (foreground/background/left/right positions) |
+| `camera_perspective` | string | No | Camera angle or viewpoint for the final composite image |
+| `lighting_consistency` | string | No | How to unify lighting direction, color temperature, and shadows across sources |
+| `scale_relationships` | string | No | Size ratios and spatial scale between extracted elements |
 | `interactions` | array | No | Descriptions of how elements from different sources interact with each other |
-| `blending_notes` | string | No | Guidance for lighting/style consistency between elements |
+| `blending_notes` | string | No | Guidance for style/lighting consistency, e.g., `match warm golden light direction`, `apply uniform watercolor texture`, `ensure realistic shadow direction from one light source` |
 
 ---
 
