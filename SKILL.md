@@ -1,5 +1,5 @@
 ---
-name: gemini-image-generator
+name: image-generator
 description: "This skill generates images using either Gemini 3 Pro Image API or OpenAI GPT Image API (gpt-image-2), configurable via environment variables. It supports both text-to-image and image-to-image generation including image editing, style transfer, and image merging. The Gemini provider includes real-time web search capabilities via Google Search integration. The provider is selected via the IMAGE_PROVIDER env variable (gemini or gpt). This skill should be used when users want to create, modify, or transform images using AI. The workflow involves three steps: first, Claude analyzes user intent and clarifies unclear requirements through conversation; second, Claude converts intent to structured JSON prompt format; third, Claude calls the generate_image.py script to generate images and save results to the generation-image directory."
 ---
 
