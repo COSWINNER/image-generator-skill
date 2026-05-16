@@ -105,6 +105,36 @@ When a user requests image generation, Claude should analyze and clarify their i
      * Pose copying
      * Object/scene transformation
 
+#### Concept Auto-Expansion Table
+
+When the user's input contains any of the following aesthetic/theme keywords (or their Chinese equivalents / common variants), Claude MUST automatically populate the corresponding JSON fields with the mapped visual details — unless the user explicitly overrides them.
+
+| User Concept | Auto-expanded JSON Fields |
+|---|---|
+| `cyberpunk` | scene.lighting: neon, rim_light; scene.time: midnight; scene.weather: rainy; scene.atmosphere: neon-lit urban dystopia; scene.background_elements: holographic ads, steam vents, flying drones; color palette: electric blue, magenta, deep shadow; subject accessories: tech implants, chrome, LED accents |
+| `noir` | scene.lighting: high contrast single source, harsh shadows; scene.time: midnight; scene.weather: foggy; technical.film_stock: CineStill 800T; technical.color_grade: desaturated high contrast; scene.atmosphere: ominous shadows, moral ambiguity |
+| `anime` | meta.quality: anime_v6; style_modifiers.medium: anime; subject skin: smooth flawless, no realistic pores; scene.lighting: bright, clean, even illumination |
+| `vaporwave` | color palette: pink, cyan, purple; scene.background_elements: greek statues, grid floor, sunset gradients, palm trees; style_modifiers.aesthetic: retro_80s, synthwave |
+| `steampunk` | color palette: brass, copper, brown, sepia; subject accessories: gears, goggles, Victorian-era clothing; scene.background_elements: steam pipes, clockwork mechanisms, brass instruments |
+| `minimalist` / `极简` | scene: clean solid or gradient background; composition: centered subject, generous negative space; color palette: monochromatic or limited palette; graphic_design.visual_style.effects: none |
+| `ghibli` / `吉卜力` | style_modifiers.medium: anime; color palette: soft watercolor, warm natural tones; scene.atmosphere: dreamy, gentle, nostalgic; scene.lighting: soft diffused natural light |
+| `gothic` / `暗黑` | color palette: deep burgundy, black, dark purple; scene: cathedral, graveyard, or dark interior; lighting: candlelight, stained glass; atmosphere: dark, mysterious, brooding |
+| `retro_80s` / `复古` | color palette: neon pink, cyan, purple; scene.lighting: neon glow; technical.color_grade: high contrast neon, warm vintage shift; scene.background_elements: synthwave grid, VHS artifacts, CRT scan lines |
+| `cinematic` / `电影感` | technical.film_stock: CineStill 800T; technical.camera_model: Arri Alexa or RED; scene.lighting: cinematic three-point or practical lights; composition: wide shot or medium shot; scene.depth_of_field: shallow, cinematic bokeh |
+| `editorial` / `时尚` | scene.lighting: studio fashion, dramatic directional; composition: editorial pose; technical.camera_model: Hasselblad medium format; background: clean studio backdrop or architectural |
+| `fantasy` / `奇幻` | scene: enchanted forest or castle ruins; lighting: magical volumetric rays; background_elements: floating particles, ethereal glow, ancient runes; atmosphere: dreamlike wonder |
+| `sci-fi` / `科幻` | scene: spaceship interior or futuristic city; lighting: cool blue-white; background_elements: holographic displays, sleek technology; color palette: cool metallic, blue accent |
+| `watercolor` / `水彩` | style_modifiers.medium: watercolor; scene.atmosphere: soft, flowing; texture: visible paper grain, paint bleeding at edges, translucent washes |
+| `oil_painting` / `油画` | style_modifiers.medium: oil_painting; texture: visible brushstrokes, rich impasto; lighting: chiaroscuro if classical, thick pigment texture |
+| `pastel` / `马卡龙` | color palette: soft pink, lavender, mint, baby blue; lighting: soft diffused, even; scene.atmosphere: gentle, dreamy, sweet |
+| `dark_fantasy` / `暗黑奇幻` | scene: dark forest or ruined castle; lighting: moonlight, volumetric fog; color palette: deep blues, dark gold, crimson; atmosphere: ominous, mysterious, ancient power |
+
+**Expansion Rules**:
+- User-specified values **always override** auto-expanded defaults (e.g., "赛博朋克但白天" → keep midnight overridden by user's daytime preference)
+- Multiple concepts stack and merge ("dark fantasy" → gothic + fantasy merged)
+- If the user's concept is NOT in the table, Claude should use its own knowledge to infer the concept's typical visual elements and apply the same expansion principle
+- Expansion applies to **all modes** (T2I, I2I, Multi-Ref) whenever a concept keyword is present
+
 #### Domain-Specific Clarification Dimensions
 
 When analyzing user intent, Claude MUST use the relevant domain checklist below. Do not ask every item mechanically; fill reasonable high-quality defaults for unspecified details when the user's intent is already clear.
@@ -152,6 +182,24 @@ When analyzing user intent, Claude MUST use the relevant domain checklist below.
 | Text/labels | Headline, tagline, price, discount badge, feature callouts |
 | Color theme | Brand color, accent color, seasonal palette |
 | Background | White studio, marble, paper texture, kitchen, bathroom, outdoor lifestyle scene |
+
+#### Infer vs Ask Decision Framework
+
+Core principle: **Infer whenever possible; ask only when inference is ambiguous. Do NOT mechanically ask every dimension.**
+
+| Decision Type | When to Apply | Examples |
+|---|---|---|
+| **Always auto-infer** | Color palette, lighting direction, time of day, atmosphere, film style — these are direct consequences of the user's high-level concept | User says "赛博朋克" → auto-fill neon lighting, midnight, rainy. No need to ask. |
+| **Default infer, allow override** | Scene elements, clothing details, accessories, composition — fill theme-appropriate defaults | User says "赛博朋克女孩" → auto-fill tech accessories, dark clothing. User can override: "不，穿白色连衣裙". |
+| **Ask when ambiguous** | Subject identity (age, gender, ethnicity if relevant), specific pose, text content, brand info, named entities | User says "画一个女孩" → ask: age range? style? But if context already implies enough, skip. |
+| **Always ask** | aspect_ratio (in T2I mode), image_size, whether precise face identity is needed | Cannot be inferred from context. |
+
+**Asking Strategy**:
+- Ask at most **2-3 questions per turn**, never interrogate dimension by dimension
+- Prioritize questions that **most impact the final image** (subject appearance, overall style, composition)
+- If the user already provides enough context (e.g., a detailed description), **infer everything** and only ask aspect_ratio + image_size
+- Use **choice questions** over open-ended ones: "明亮清新还是暗调电影感？" rather than "你想要什么风格？"
+- If the user's intent is clear and rich enough, skip asking entirely — just generate the JSON with inferred details and let the user review
 
 2. **🚨 CRITICAL: Mode Detection** (determine generation mode):
 
@@ -432,6 +480,27 @@ When converting user intent to JSON, Claude MUST apply these rules to improve im
 7. **Use camera/film aesthetics for photography**
    - For photographic output, include a `technical` section with `camera_model`, `lens`, `film_stock`, `filter_effect`, or `color_grade` when the user did not provide a conflicting style.
    - Good defaults include `35mm lens`, `Sony A7R IV`, `Leica M6`, `Kodak Portra 400`, `CineStill 800T`, `Fujifilm Pro 400H`, and `soft black mist filter`.
+
+8. **Aesthetic concept auto-expansion**
+   - When the user's input contains aesthetic concept keywords (cyberpunk, noir, anime, etc.), Claude MUST:
+     1. Map the concept to concrete visual elements (see Concept Auto-Expansion Table above)
+     2. Write the mapped details into the corresponding JSON fields (scene, lighting, color, accessories, etc.)
+     3. Reflect the expanded details in `user_intent` as a rich, vivid sentence
+   - Example: User says "一个赛博朋克女孩" → Expanded user_intent: "一个年轻女性站在午夜时分的霓虹灯街道，雨水打湿的地面反射着电蓝色和品红色的霓虹灯光，她有着发光的赛博手臂植入物和电蓝色短发，穿着哑光黑色战术夹克"
+
+9. **Description richness**
+   - Every `description` field in the JSON must be specific enough to evoke a mental image on its own.
+   - Bad: `"description": "confident business executive"`
+   - Good: `"description": "confident business executive in her early 40s, sharp features, warm olive skin with natural undertones, subtle freckles across the nose, wearing minimal professional makeup"`
+   - Bad: `"description": "cyberpunk street"`
+   - Good: `"description": "rain-soaked cyberpunk alley at midnight, neon signs reflecting off wet asphalt, steam rising from metal grates, holographic advertisements flickering on building facades"`
+   - Principle: **Each description should let the reader "see" the image in their mind**, not just know the concept label.
+
+10. **user_intent as the primary prompt**
+    - The `user_intent` field is the **most important prompt field** in the entire JSON — it gets passed directly to the generation model.
+    - It should NOT be a mere restatement of the user's raw input. It must be Claude's analyzed and expanded **complete, vivid, visually rich sentence**.
+    - Must include: subject appearance + scene environment + lighting atmosphere + composition hint.
+    - Recommended length: 30-80 English words (or equivalent Chinese), detailed enough but not excessive.
 
 ### Step 3: Generate Image
 
