@@ -906,6 +906,10 @@ def map_quality_for_gpt(quality: Optional[str]) -> str:
     return GPT_QUALITY_MAP.get(quality, "auto")
 
 
+def sanitize_gpt_reference_prompt(prompt: str) -> str:
+    return prompt.replace("orthographic", "top-down 2D")
+
+
 def generate_image_gpt(
     prompt_json: dict,
     input_images: Optional[list] = None,
@@ -929,6 +933,8 @@ def generate_image_gpt(
     client = get_openai_client()
 
     if input_images:
+        prompt_text = sanitize_gpt_reference_prompt(prompt_text)
+        print(f"\n--- Sanitized GPT Reference Prompt ---\n{prompt_text}\n--------------------------------------\n")
         print(f"Editing image with {model} (size={size}, quality={quality})...")
         from io import BytesIO
         image_files = []

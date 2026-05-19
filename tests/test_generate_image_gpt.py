@@ -97,3 +97,31 @@ def test_gpt_reference_image_uses_images_edit(monkeypatch, tmp_path):
     assert call["quality"] == "auto"
     assert call["prompt"].startswith("把人物放到山景背景中")
     assert call["image"].read().startswith(b"\x89PNG")
+
+
+def test_gpt_reference_image_rewrites_orthographic_prompt(monkeypatch, tmp_path):
+    client = FakeOpenAIClient()
+    monkeypatch.setattr(generate_image, "get_openai_client", lambda: client)
+    monkeypatch.setattr(generate_image, "get_env_value", lambda key, default=None: default)
+
+    prompt_json = {
+        "user_intent": "基于参考图生成便利店俯视布局图",
+        "meta": {"domain": "graphic_design", "aspect_ratio": "16:9", "image_size": "1K"},
+        "graphic_design": {
+            "layout": {
+                "grid_system": "strict orthographic architectural plan",
+                "alignment": "precise rectangular layout",
+            },
+        },
+    }
+    input_image = Image.new("RGB", (1, 1), color="red")
+
+    generate_image.generate_image_gpt(
+        prompt_json=prompt_json,
+        input_images=[input_image],
+        output_dir=str(tmp_path),
+    )
+
+    prompt = client.images.edit_calls[0]["prompt"]
+    assert "orthographic" not in prompt.lower()
+    assert "top-down 2D" in prompt
