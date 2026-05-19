@@ -907,7 +907,28 @@ def map_quality_for_gpt(quality: Optional[str]) -> str:
 
 
 def sanitize_gpt_reference_prompt(prompt: str) -> str:
-    return prompt.replace("orthographic", "top-down 2D")
+    lines = [line for line in prompt.splitlines() if not line.startswith("Avoid:")]
+    return "\n".join(lines).replace("orthographic", "top-down 2D")
+
+
+def build_safe_gpt_reference_prompt(prompt_json: dict) -> str:
+    intent = prompt_json.get("user_intent") or "Use the input image as visual reference and generate a clean image."
+    return sanitize_gpt_reference_prompt(intent)
+
+
+def is_proxy_tool_error(error: Exception) -> bool:
+    message = str(error)
+    return "Tool choice 'image_generation'" in message and "tools" in message
+
+
+def edit_image_gpt(client, model: str, image, prompt: str, size: str, quality: str):
+    return client.images.edit(
+        model=model,
+        image=image,
+        prompt=prompt,
+        size=size,
+        quality=quality,
+    )
 
 
 def generate_image_gpt(
@@ -944,13 +965,19 @@ def generate_image_gpt(
             buf.seek(0)
             image_files.append(buf)
 
-        result = client.images.edit(
-            model=model,
-            image=image_files if len(image_files) > 1 else image_files[0],
-            prompt=prompt_text,
-            size=size,
-            quality=quality,
-        )
+        image_input = image_files if len(image_files) > 1 else image_files[0]
+        try:
+            result = edit_image_gpt(client, model, image_input, prompt_text, size, quality)
+        except Exception as e:
+            if not is_proxy_tool_error(e):
+                raise
+            print("Warning: GPT image edit proxy rejected the prompt; retrying with a simplified prompt...")
+            for image_file in image_files:
+                image_file.seek(0)
+            image_input = image_files if len(image_files) > 1 else image_files[0]
+            prompt_text = build_safe_gpt_reference_prompt(prompt_json)
+            print(f"\n--- Safe GPT Reference Prompt ---\n{prompt_text}\n---------------------------------\n")
+            result = edit_image_gpt(client, model, image_input, prompt_text, size, quality)
         if not result.data:
             print("Warning: No image data in response.")
             return ""

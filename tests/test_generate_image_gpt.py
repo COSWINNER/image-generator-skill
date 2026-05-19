@@ -25,10 +25,16 @@ class FakeResponses:
 class FakeImages:
     def __init__(self):
         self.edit_calls = []
+        self.edit_responses = []
         self.generate_calls = []
 
     def edit(self, **kwargs):
         self.edit_calls.append(kwargs)
+        if self.edit_responses:
+            response = self.edit_responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
         return SimpleNamespace(
             data=[SimpleNamespace(b64_json=base64.b64encode(b"fake-image").decode("ascii"))]
         )
@@ -125,3 +131,65 @@ def test_gpt_reference_image_rewrites_orthographic_prompt(monkeypatch, tmp_path)
     prompt = client.images.edit_calls[0]["prompt"]
     assert "orthographic" not in prompt.lower()
     assert "top-down 2D" in prompt
+
+
+def test_gpt_reference_image_omits_negative_prompt_line(monkeypatch, tmp_path):
+    client = FakeOpenAIClient()
+    monkeypatch.setattr(generate_image, "get_openai_client", lambda: client)
+    monkeypatch.setattr(generate_image, "get_env_value", lambda key, default=None: default)
+
+    prompt_json = {
+        "user_intent": "基于参考图生成便利店顶视平面布局图",
+        "meta": {"aspect_ratio": "16:9", "image_size": "1K"},
+        "advanced": {"negative_prompt": ["garbled text", "watermark"]},
+    }
+    input_image = Image.new("RGB", (1, 1), color="red")
+
+    generate_image.generate_image_gpt(
+        prompt_json=prompt_json,
+        input_images=[input_image],
+        output_dir=str(tmp_path),
+    )
+
+    prompt = client.images.edit_calls[0]["prompt"]
+    assert "Avoid:" not in prompt
+    assert "garbled text" not in prompt.lower()
+    assert "watermark" not in prompt.lower()
+
+
+def test_gpt_reference_image_retries_with_safe_prompt_on_proxy_tool_error(monkeypatch, tmp_path):
+    client = FakeOpenAIClient()
+    client.images.edit_responses = [
+        RuntimeError("Tool choice 'image_generation' not found in 'tools' parameter."),
+        SimpleNamespace(
+            data=[SimpleNamespace(b64_json=base64.b64encode(b"fake-image").decode("ascii"))]
+        ),
+    ]
+    monkeypatch.setattr(generate_image, "get_openai_client", lambda: client)
+    monkeypatch.setattr(generate_image, "get_env_value", lambda key, default=None: default)
+
+    prompt_json = {
+        "user_intent": "使用输入的便利店内景参考图作为风格和结构参考，重新生成一张便利店内景的正交俯视布局图",
+        "meta": {"domain": "graphic_design", "aspect_ratio": "16:9", "image_size": "1K"},
+        "graphic_design": {
+            "layout": {
+                "grid_system": "strict orthographic architectural plan",
+                "alignment": "precise rectangular layout",
+            },
+        },
+        "advanced": {"negative_prompt": ["garbled text", "watermark"]},
+    }
+    input_image = Image.new("RGB", (1, 1), color="red")
+
+    output = generate_image.generate_image_gpt(
+        prompt_json=prompt_json,
+        input_images=[input_image],
+        output_dir=str(tmp_path),
+    )
+
+    assert output
+    assert len(client.images.edit_calls) == 2
+    retry_prompt = client.images.edit_calls[1]["prompt"]
+    assert "参考图" in retry_prompt
+    assert "Avoid:" not in retry_prompt
+    assert "Layout:" not in retry_prompt
