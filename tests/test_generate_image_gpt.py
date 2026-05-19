@@ -24,7 +24,14 @@ class FakeResponses:
 
 class FakeImages:
     def __init__(self):
+        self.edit_calls = []
         self.generate_calls = []
+
+    def edit(self, **kwargs):
+        self.edit_calls.append(kwargs)
+        return SimpleNamespace(
+            data=[SimpleNamespace(b64_json=base64.b64encode(b"fake-image").decode("ascii"))]
+        )
 
     def generate(self, **kwargs):
         self.generate_calls.append(kwargs)
@@ -63,7 +70,7 @@ def test_gpt_text_to_image_still_uses_images_generate(monkeypatch, tmp_path):
     assert call["quality"] == "medium"
 
 
-def test_gpt_reference_image_uses_responses_image_generation_tool(monkeypatch, tmp_path):
+def test_gpt_reference_image_uses_images_edit(monkeypatch, tmp_path):
     client = FakeOpenAIClient()
     monkeypatch.setattr(generate_image, "get_openai_client", lambda: client)
     monkeypatch.setattr(generate_image, "get_env_value", lambda key, default=None: default)
@@ -82,12 +89,11 @@ def test_gpt_reference_image_uses_responses_image_generation_tool(monkeypatch, t
 
     assert output
     assert client.images.generate_calls == []
-    assert len(client.responses.create_calls) == 1
-    call = client.responses.create_calls[0]
+    assert client.responses.create_calls == []
+    assert len(client.images.edit_calls) == 1
+    call = client.images.edit_calls[0]
     assert call["model"] == "gpt-image-2"
-    assert call["tools"] == [{"type": "image_generation", "size": "1376x768", "quality": "auto"}]
-    assert "tool_choice" not in call
-    message_content = call["input"][0]["content"]
-    assert message_content[0]["type"] == "input_text"
-    assert message_content[1]["type"] == "input_image"
-    assert message_content[1]["image_url"].startswith("data:image/png;base64,")
+    assert call["size"] == "1376x768"
+    assert call["quality"] == "auto"
+    assert call["prompt"].startswith("把人物放到山景背景中")
+    assert call["image"].read().startswith(b"\x89PNG")

@@ -906,21 +906,6 @@ def map_quality_for_gpt(quality: Optional[str]) -> str:
     return GPT_QUALITY_MAP.get(quality, "auto")
 
 
-def image_to_data_url(image: Image.Image) -> str:
-    from io import BytesIO
-
-    buf = BytesIO()
-    image.save(buf, format="PNG")
-    return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
-
-
-def extract_response_image_base64(response) -> str:
-    for output in response.output:
-        if output.type == "image_generation_call":
-            return output.result
-    return ""
-
-
 def generate_image_gpt(
     prompt_json: dict,
     input_images: Optional[list] = None,
@@ -945,16 +930,25 @@ def generate_image_gpt(
 
     if input_images:
         print(f"Editing image with {model} (size={size}, quality={quality})...")
-        content = [{"type": "input_text", "text": prompt_text}]
+        from io import BytesIO
+        image_files = []
         for img in input_images:
-            content.append({"type": "input_image", "image_url": image_to_data_url(img)})
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            image_files.append(buf)
 
-        result = client.responses.create(
+        result = client.images.edit(
             model=model,
-            input=[{"role": "user", "content": content}],
-            tools=[{"type": "image_generation", "size": size, "quality": quality}],
+            image=image_files if len(image_files) > 1 else image_files[0],
+            prompt=prompt_text,
+            size=size,
+            quality=quality,
         )
-        image_base64 = extract_response_image_base64(result)
+        if not result.data:
+            print("Warning: No image data in response.")
+            return ""
+        image_base64 = result.data[0].b64_json
     else:
         # Text-to-image: use generate endpoint
         print(f"Generating image with {model} (size={size}, quality={quality})...")
