@@ -59,6 +59,19 @@ except ImportError:
     openai = None
 
 
+# Non-photorealistic quality/modifier values that should suppress
+# automatic realistic skin texture and film aesthetic injections
+NON_PHOTOREALISTIC_QUALITIES = {
+    "anime_v6", "3d_render_octane", "oil_painting", "sketch",
+    "pixel_art", "vector_illustration", "flat_illustration", "hand_drawn"
+}
+NON_PHOTOREALISTIC_MEDIUMS = {
+    "anime", "3d_render", "oil_painting", "watercolor", "pencil_sketch",
+    "ink_drawing", "concept_art", "flat_illustration", "isometric_design",
+    "3d_minimal", "abstract_geometric", "collage_style"
+}
+
+
 def get_env_value(key: str, default: Optional[str] = None) -> Optional[str]:
     """
     Get environment value with priority: .env > system env > default.
@@ -188,16 +201,28 @@ def build_prompt_text(prompt_json: dict) -> str:
     advanced = prompt_json.get("advanced", {})
 
     if domain == "photography":
-        photo_excludes = ["blur", "watermark", "text overlay", "plastic skin", "airbrushing", "bad hands", "deformed fingers", "low quality"]
+        quality = meta.get("quality", "")
+        medium = prompt_json.get("style_modifiers", {}).get("medium", "")
+        is_non_photorealistic = (
+            quality in NON_PHOTOREALISTIC_QUALITIES or
+            medium in NON_PHOTOREALISTIC_MEDIUMS
+        )
+
+        if is_non_photorealistic:
+            photo_excludes = ["blur", "watermark", "text overlay", "realistic pores",
+                              "photorealistic skin", "bad hands", "deformed fingers", "low quality"]
+        else:
+            photo_excludes = ["blur", "watermark", "text overlay", "plastic skin",
+                              "airbrushing", "bad hands", "deformed fingers", "low quality"]
         negative_items.extend(photo_excludes)
 
         subjects = prompt_json.get("subject", [])
         has_person_subject = any(subj.get("type", "person") == "person" for subj in subjects)
         has_skin_texture = any("skin_texture" in subj for subj in subjects)
-        if advanced.get("auto_skin_texture", True) and has_person_subject and not has_skin_texture:
+        if advanced.get("auto_skin_texture", True) and has_person_subject and not has_skin_texture and not is_non_photorealistic:
             parts.append("realistic skin texture, visible pores, natural imperfections")
 
-        if advanced.get("auto_film_aesthetic", True) and has_person_subject and "technical" not in prompt_json:
+        if advanced.get("auto_film_aesthetic", True) and has_person_subject and "technical" not in prompt_json and not is_non_photorealistic:
             parts.append("photorealistic camera capture, natural lens rendering, subtle film aesthetic")
 
     # Domain-specific automatic negative prompts
@@ -911,6 +936,10 @@ def sanitize_gpt_reference_prompt(prompt: str) -> str:
     return "\n".join(lines).replace("orthographic", "top-down 2D")
 
 
+def build_safe_prompt_text(prompt_json: dict) -> str:
+    return prompt_json.get("user_intent") or "Generate a clean natural image."
+
+
 def build_safe_gpt_reference_prompt(prompt_json: dict) -> str:
     intent = prompt_json.get("user_intent") or "Use the input image as visual reference and generate a clean image."
     return sanitize_gpt_reference_prompt(intent)
@@ -985,12 +1014,25 @@ def generate_image_gpt(
     else:
         # Text-to-image: use generate endpoint
         print(f"Generating image with {model} (size={size}, quality={quality})...")
-        result = client.images.generate(
-            model=model,
-            prompt=prompt_text,
-            size=size,
-            quality=quality,
-        )
+        try:
+            result = client.images.generate(
+                model=model,
+                prompt=prompt_text,
+                size=size,
+                quality=quality,
+            )
+        except Exception as e:
+            if not is_proxy_tool_error(e):
+                raise
+            print("Warning: GPT image generation proxy rejected the prompt; retrying with a simplified prompt...")
+            prompt_text = build_safe_prompt_text(prompt_json)
+            print(f"\n--- Safe GPT Prompt ---\n{prompt_text}\n-----------------------\n")
+            result = client.images.generate(
+                model=model,
+                prompt=prompt_text,
+                size=size,
+                quality=quality,
+            )
         if not result.data:
             print("Warning: No image data in response.")
             return ""

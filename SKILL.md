@@ -128,6 +128,12 @@ When the user's input contains any of the following aesthetic/theme keywords (or
 | `oil_painting` / `油画` | style_modifiers.medium: oil_painting; texture: visible brushstrokes, rich impasto; lighting: chiaroscuro if classical, thick pigment texture |
 | `pastel` / `马卡龙` | color palette: soft pink, lavender, mint, baby blue; lighting: soft diffused, even; scene.atmosphere: gentle, dreamy, sweet |
 | `dark_fantasy` / `暗黑奇幻` | scene: dark forest or ruined castle; lighting: moonlight, volumetric fog; color palette: deep blues, dark gold, crimson; atmosphere: ominous, mysterious, ancient power |
+| `3d render` / `3D渲染` / `3D` | style_modifiers.medium: 3d_render; meta.quality: 3d_render_octane; subject skin: smooth, flawless, no realistic pores; scene.lighting: 3-point studio lighting with soft shadows; texture: clean, smooth PBR materials |
+| `manga` / `漫画` | meta.quality: anime_v6; style_modifiers.medium: anime; subject skin: smooth, manga-style cel shading, no realistic pores; scene.lighting: bright, clean, flat anime lighting; composition: dynamic manga panel angles |
+| `二次元` / `2D anime` | meta.quality: anime_v6; style_modifiers.medium: anime; subject skin: smooth, flawless, anime cel shading; scene.lighting: bright, clean, cel-shaded with soft gradients; atmosphere: vibrant, energetic anime aesthetic |
+| `cartoon` / `卡通` | meta.quality: anime_v6; style_modifiers.medium: flat_illustration; subject skin: smooth, stylized, no realistic pores; scene.lighting: bright, even, cartoony; atmosphere: playful, colorful |
+| `cel shading` / `三渲二` | style_modifiers.medium: 3d_render; meta.quality: 3d_render_octane; lighting: flat cel-shaded, crisp shadow edges; texture: smooth, toon-style materials with clean outlines; subject skin: smooth, cel-shaded, no realistic pores |
+| `chibi` / `Q版` | meta.quality: anime_v6; style_modifiers.medium: anime; subject: chibi proportions, large head, small body, cute exaggerated features; scene.lighting: bright, cheerful, soft; atmosphere: cute, playful, kawaii |
 
 **Expansion Rules**:
 - User-specified values **always override** auto-expanded defaults (e.g., "赛博朋克但白天" → keep midnight overridden by user's daytime preference)
