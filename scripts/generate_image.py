@@ -27,8 +27,11 @@ Usage:
 import os
 import sys
 import json
-import argparse
 import base64
+import binascii
+import argparse
+import urllib.request
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -132,6 +135,56 @@ def get_openai_client():
         client_kwargs["base_url"] = base_url
 
     return openai.OpenAI(**client_kwargs)
+
+
+class DiagLog:
+    """Append-only JSONL diagnostic logger.
+
+    Writes one JSON line per event to ``generation.log`` in the output dir.
+    Any IO failure is swallowed silently — logging must NEVER break image
+    generation. This is the primary source of truth for "why did a run that
+    the provider logged as successful produce no image file".
+    """
+
+    def __init__(self, path: Optional[Path] = None):
+        self._path = Path(path) if path else None
+
+    def event(self, event_name: str, **fields):
+        """Emit one JSON line: {"ts": ..., "event": ..., ...fields}."""
+        if not self._path:
+            return
+        try:
+            record = {
+                "ts": datetime.now().isoformat(timespec="milliseconds"),
+                "event": event_name,
+            }
+            for key, value in fields.items():
+                if isinstance(value, str) and len(value) > 500:
+                    value = value[:500] + "...(truncated)"
+                record[key] = value
+            with open(self._path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # logging is best-effort; never disrupt generation
+
+    # Convenience wrappers (each just emits one event line)
+    def start(self, **f):
+        self.event("start", **f)
+
+    def api_success(self, **f):
+        self.event("api_success", **f)
+
+    def api_error(self, **f):
+        self.event("api_error", **f)
+
+    def parse_result(self, **f):
+        self.event("parse_result", **f)
+
+    def save_result(self, **f):
+        self.event("save_result", **f)
+
+    def final(self, **f):
+        self.event("final", **f)
 
 
 def load_input_images(image_paths: list[str]) -> list:
@@ -730,12 +783,101 @@ def _build_multi_reference_prompt(multi_ref: dict) -> list[str]:
     return parts
 
 
+def parse_gemini_response(response, output_path: Path, timestamp: str,
+                          log: Optional[DiagLog] = None, model: str = "") -> str:
+    """Parse a Gemini generate_content response and save any inline image.
+
+    Robust against: empty candidates, missing content/parts, safety blocks,
+    and save errors. Returns the saved filepath, or "" if no image was saved.
+    """
+    response_text = ""
+
+    try:
+        candidates = getattr(response, "candidates", None) or []
+    except Exception:
+        candidates = []
+
+    if not candidates:
+        print("Warning: API returned no candidates (response may have been blocked).")
+        if log:
+            log.event("no_candidates", provider="gemini", model=model)
+        return ""
+
+    candidate = candidates[0]
+
+    # Surface finish_reason so safety/recitation blocks are visible
+    finish_reason = getattr(candidate, "finish_reason", None)
+    if finish_reason is not None and str(finish_reason).upper() not in (
+        "STOP", "MAX_TOKENS", "FINISH_REASON_STOP", "NONE"
+    ):
+        print(f"Warning: generation finished with reason {finish_reason}.")
+        if log:
+            log.event("blocked_finish", provider="gemini", model=model,
+                      finish_reason=str(finish_reason))
+
+    content = getattr(candidate, "content", None)
+    parts = getattr(content, "parts", None) if content is not None else None
+
+    if not parts:
+        print("Warning: response candidate has no parts (no image data).")
+        if log:
+            log.event("no_parts", provider="gemini", model=model,
+                      finish_reason=str(finish_reason))
+        return ""
+
+    for part in parts:
+        if getattr(part, "text", None):
+            response_text = part.text
+            print(f"Model response: {part.text}")
+        elif getattr(part, "inline_data", None):
+            filepath = None
+            try:
+                try:
+                    # Use the official as_image() method to get a PIL Image
+                    image = part.as_image()
+                    filepath = output_path / f"generated_{timestamp}.png"
+                    image.save(str(filepath))
+                except AttributeError:
+                    # Fallback: direct bytes access when as_image() is unavailable
+                    image_data = part.inline_data.data
+                    mime_type = getattr(part.inline_data, "mime_type", "") or ""
+                    ext = "png"
+                    if "jpeg" in mime_type or "jpg" in mime_type:
+                        ext = "jpg"
+                    elif "webp" in mime_type:
+                        ext = "webp"
+                    filepath = output_path / f"generated_{timestamp}.{ext}"
+                    with open(filepath, "wb") as f:
+                        f.write(image_data)
+            except (OSError, ValueError) as e:
+                # PIL save / disk / permission failure
+                print(f"Error saving image: {e}")
+                if log:
+                    log.save_result(provider="gemini", model=model, ok=False, error=str(e))
+                return ""
+
+            print(f"Image saved to: {filepath}")
+            if log:
+                log.save_result(provider="gemini", model=model, ok=True, path=str(filepath))
+            return str(filepath)
+
+    # Loop completed without any inline image data
+    print("Warning: No image was generated in the response.")
+    if response_text:
+        print(f"Model only returned text: {response_text}")
+    if log:
+        log.parse_result(provider="gemini", model=model, image_saved=False,
+                         response_text=response_text)
+    return ""
+
+
 def generate_image(
     client: genai.Client,
     prompt_json: dict,
     input_images: Optional[list] = None,
     output_dir: str = "./generation-image",
-    model_override: Optional[str] = None
+    model_override: Optional[str] = None,
+    log: Optional[DiagLog] = None
 ) -> str:
     """
     Generate image using Gemini 3 Pro Image.
@@ -804,63 +946,17 @@ def generate_image(
         )
     except Exception as e:
         print(f"Error generating image: {e}")
-        sys.exit(1)
-
-    # Process response and save image
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    image_saved = False
-    response_text = ""
-
-    for part in response.candidates[0].content.parts:
-        if part.text is not None:
-            response_text = part.text
-            print(f"Model response: {part.text}")
-        elif part.inline_data is not None:
-            # Use the official as_image() method to get PIL Image
-            try:
-                image = part.as_image()
-
-                # Generate filename
-                filename = f"generated_{timestamp}.png"
-                filepath = output_path / filename
-
-                # Save using PIL
-                image.save(str(filepath))
-
-                print(f"Image saved to: {filepath}")
-                image_saved = True
-                return str(filepath)
-            except AttributeError:
-                # Fallback: if as_image() not available, try direct data access
-                # inline_data.data is already bytes, no need to base64 decode
-                image_data = part.inline_data.data
-
-                # Determine file extension based on mime type
-                mime_type = part.inline_data.mime_type
-                ext = "png"
-                if "jpeg" in mime_type or "jpg" in mime_type:
-                    ext = "jpg"
-                elif "webp" in mime_type:
-                    ext = "webp"
-
-                # Generate filename
-                filename = f"generated_{timestamp}.{ext}"
-                filepath = output_path / filename
-
-                with open(filepath, "wb") as f:
-                    f.write(image_data)
-
-                print(f"Image saved to: {filepath}")
-                image_saved = True
-                return str(filepath)
-
-    if not image_saved:
-        print("Warning: No image was generated in the response.")
-        if response_text:
-            print(f"Model only returned text: {response_text}")
+        if log:
+            log.api_error(provider="gemini", model=model, error=str(e))
         return ""
 
-    return ""
+    if log:
+        log.api_success(provider="gemini", model=model,
+                        has_candidates=bool(getattr(response, "candidates", None)))
+
+    # Process response and save image
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return parse_gemini_response(response, output_path, timestamp, log=log, model=model)
 
 
 # ===== GPT/OpenAI Image Generation =====
@@ -954,6 +1050,84 @@ def is_proxy_tool_error(error: Exception) -> bool:
     return "Tool choice 'image_generation'" in message and "tools" in message
 
 
+def _resolve_relative_url(url: str) -> str:
+    """Resolve a possibly-relative image URL against the OPENAI_BASE_URL origin.
+
+    Some proxies return paths like ``/v1/files/...`` instead of full URLs.
+    """
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    base_url = get_env_value("OPENAI_BASE_URL") or ""
+    if base_url:
+        parsed = urllib.parse.urlparse(base_url)
+        if parsed.scheme and parsed.netloc:
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            return origin + url if url.startswith("/") else f"{origin}/{url}"
+    return url
+
+
+def _download_url(url: str, filepath: Path, timeout: float = 30.0) -> bool:
+    """Download a URL to filepath. Returns True on success, False on failure.
+
+    Rejects obvious non-image error pages (e.g. text/html responses).
+    """
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "gemini-image-skill/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ctype = resp.headers.get("Content-Type", "") or ""
+            if ctype and not ctype.startswith("image/") and "octet-stream" not in ctype:
+                return False
+            data = resp.read()
+        if not data:
+            return False
+        with open(filepath, "wb") as f:
+            f.write(data)
+        return True
+    except Exception:
+        return False
+
+
+def extract_and_save_image(image_item, filepath: Path,
+                           log: Optional[DiagLog] = None,
+                           provider: str = "gpt", model: str = "") -> Optional[str]:
+    """Extract an image from an OpenAI Images response item and save it.
+
+    Tries ``b64_json`` first, then falls back to downloading ``url`` (some
+    third-party proxies return images by URL instead of base64). Returns the
+    saved filepath, or None on failure.
+    """
+    b64 = getattr(image_item, "b64_json", None)
+    if b64:
+        try:
+            image_bytes = base64.b64decode(b64)
+        except (binascii.Error, ValueError) as e:
+            print(f"Warning: failed to decode image data: {e}")
+            if log:
+                log.event("b64_decode_error", provider=provider, model=model, error=str(e))
+            return None
+        try:
+            with open(filepath, "wb") as f:
+                f.write(image_bytes)
+        except OSError as e:
+            print(f"Error saving image: {e}")
+            if log:
+                log.save_result(provider=provider, model=model, ok=False, error=str(e))
+            return None
+        return str(filepath)
+
+    url = getattr(image_item, "url", None)
+    if url:
+        resolved = _resolve_relative_url(url)
+        if _download_url(resolved, filepath):
+            return str(filepath)
+        print(f"Warning: failed to download image from {resolved}")
+        if log:
+            log.event("url_download_error", provider=provider, model=model, url=resolved[:200])
+        return None
+
+    return None
+
+
 def edit_image_gpt(client, model: str, image, prompt: str, size: str, quality: str):
     return client.images.edit(
         model=model,
@@ -968,7 +1142,8 @@ def generate_image_gpt(
     prompt_json: dict,
     input_images: Optional[list] = None,
     output_dir: str = "./generation-image",
-    model_override: Optional[str] = None
+    model_override: Optional[str] = None,
+    log: Optional[DiagLog] = None
 ) -> str:
     """Generate image using OpenAI GPT Image API."""
     output_path = Path(output_dir)
@@ -1007,8 +1182,12 @@ def generate_image_gpt(
             result = edit_image_gpt(client, model, image_input, prompt_text, size, quality)
         except Exception as e:
             if not is_proxy_tool_error(e):
+                if log:
+                    log.api_error(provider="gpt", model=model, error=str(e))
                 raise
             print("Warning: GPT image edit proxy rejected the prompt; retrying with a simplified prompt...")
+            if log:
+                log.event("proxy_retry", provider="gpt", model=model, branch="i2i")
             for image_file in image_files:
                 image_file.seek(0)
             image_input = image_files if len(image_files) > 1 else image_files[0]
@@ -1017,8 +1196,9 @@ def generate_image_gpt(
             result = edit_image_gpt(client, model, image_input, prompt_text, size, quality)
         if not result.data:
             print("Warning: No image data in response.")
+            if log:
+                log.parse_result(provider="gpt", model=model, has_data=False)
             return ""
-        image_base64 = result.data[0].b64_json
     else:
         # Text-to-image: use generate endpoint
         print(f"Generating image with {model} (size={size}, quality={quality})...")
@@ -1031,8 +1211,12 @@ def generate_image_gpt(
             )
         except Exception as e:
             if not is_proxy_tool_error(e):
+                if log:
+                    log.api_error(provider="gpt", model=model, error=str(e))
                 raise
             print("Warning: GPT image generation proxy rejected the prompt; retrying with a simplified prompt...")
+            if log:
+                log.event("proxy_retry", provider="gpt", model=model, branch="t2i")
             prompt_text = build_safe_prompt_text(prompt_json)
             print(f"\n--- Safe GPT Prompt ---\n{prompt_text}\n-----------------------\n")
             result = client.images.generate(
@@ -1043,24 +1227,32 @@ def generate_image_gpt(
             )
         if not result.data:
             print("Warning: No image data in response.")
+            if log:
+                log.parse_result(provider="gpt", model=model, has_data=False)
             return ""
-        image_base64 = result.data[0].b64_json
 
-    if not image_base64:
-        print("Warning: No image data in response.")
-        return ""
+    image_item = result.data[0]
+    has_b64 = bool(getattr(image_item, "b64_json", None))
+    has_url = bool(getattr(image_item, "url", None))
+    if log:
+        log.api_success(provider="gpt", model=model, has_data=True,
+                        has_b64=has_b64, has_url=has_url)
 
-    image_bytes = base64.b64decode(image_base64)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filepath = output_path / f"generated_{timestamp}.png"
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"generated_{timestamp}.png"
-    filepath = output_path / filename
+    saved = extract_and_save_image(image_item, filepath, log=log, provider="gpt", model=model)
+    if saved:
+        print(f"Image saved to: {saved}")
+        if log:
+            log.save_result(provider="gpt", model=model, ok=True, path=saved)
+        return saved
 
-    with open(filepath, "wb") as f:
-        f.write(image_bytes)
-
-    print(f"Image saved to: {filepath}")
-    return str(filepath)
+    print("Warning: No image data in response.")
+    if log:
+        log.parse_result(provider="gpt", model=model, has_data=True,
+                         has_b64=has_b64, has_url=has_url, saved=False)
+    return ""
 
 
 def main():
@@ -1125,13 +1317,23 @@ def main():
                 all_paths.append(p)
         input_images = load_input_images(all_paths)
 
+    # Diagnostic logger (writes <output-dir>/generation.log; failures are silent).
+    # Ensure the dir exists up front so the `start` event is captured even
+    # before a generator function runs (which also mkdirs, idempotently).
+    output_dir_path = Path(args.output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    log = DiagLog(output_dir_path / "generation.log")
+    log.start(provider=provider, model=args.model or "(default)",
+              has_input_images=bool(input_images), output_dir=args.output_dir)
+
     # Route to appropriate generator
     if provider == "gpt":
         result = generate_image_gpt(
             prompt_json=prompt_json,
             input_images=input_images,
             output_dir=args.output_dir,
-            model_override=args.model
+            model_override=args.model,
+            log=log
         )
     else:
         client = get_client()
@@ -1140,13 +1342,17 @@ def main():
             prompt_json=prompt_json,
             input_images=input_images,
             output_dir=args.output_dir,
-            model_override=args.model
+            model_override=args.model,
+            log=log
         )
 
     if result:
         print(f"\nGeneration complete! Image saved to: {result}")
+        log.final(provider=provider, model=args.model or "(default)", ok=True, path=result)
     else:
         print("\nGeneration completed but no image was saved.")
+        log.final(provider=provider, model=args.model or "(default)", ok=False)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

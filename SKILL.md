@@ -514,6 +514,25 @@ Execute the image generation script with the JSON prompt.
 
 **IMPORTANT**: Use the skill's path relative to project root: `.claude/skills/gemini-image-generator-skill/scripts/generate_image.py`
 
+#### Failure-Handling Constraints
+
+When the script exits non-zero, prints an error, or reports "no image was saved", treat it as a hard failure of the **current provider/model configuration**. Do NOT work around it by changing configuration:
+
+- ❌ DO NOT change `IMAGE_PROVIDER` (e.g. do not switch `gpt` → `gemini` or vice versa)
+- ❌ DO NOT change `--model` to a different model
+- ❌ DO NOT change `--output-dir` or retarget the generation elsewhere
+- ❌ DO NOT edit the `.env` API keys, `OPENAI_BASE_URL`/`GEMINI_BASE_URL`, or any credentials
+- ❌ DO NOT silently retry with different settings and hope it works
+- ✅ DO read `<output-dir>/generation.log` for the exact failure event and report it to the user verbatim
+- ✅ DO report the provider, model, and the specific error text to the user
+- ✅ If you suspect a configuration issue (wrong API key, proxy incompatibility, unsupported model), say so explicitly and **stop** — let the user decide whether to change configuration
+
+The script already performs its own in-model prompt-simplification retry when a proxy rejects the prompt. You should not add a second layer of model/provider switching on top of that.
+
+> **Diagnostic log:** every run appends one JSON line per event to `<output-dir>/generation.log` (`ts`, `event`, `provider`, `model`, plus failure-specific fields). This is the primary source of truth for "why did a run the provider logged as successful produce no image file".
+
+Only switch provider/model when the **user explicitly asks** you to.
+
 **🚨 CRITICAL - After Image Generation**:
 - ✅ Report the output file path to the user
 - ✅ Inform the user that image generation is complete
@@ -548,7 +567,7 @@ python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --p
 #### Output Location
 
 Generated images are saved to `./generation-image/` directory (or custom directory) with timestamp-based filenames:
-- Format: `generated_YYYYMMDD_HHMMSS.png`
+- Format: `generated_YYYYMMDD_HHMMSS_<microseconds>.png` (e.g. `generated_20260708_143052_128374.png`)
 
 ## Usage Examples
 
@@ -769,3 +788,17 @@ python .claude/skills/gemini-image-generator-skill/scripts/generate_image.py --p
 - Use technical photography terms for realistic images
 - Reference specific art styles for artistic images
 - Use negative prompts in advanced section to avoid common issues (blur, bad hands, etc.)
+
+### Diagnosing "API success but no image saved"
+
+If the provider's dashboard shows a successful API call but no image file appears, check `<output-dir>/generation.log`:
+
+- `event: "parse_error"` → the API responded but the skill could not parse it (proxy returned a non-standard schema). Report the `error` field; this is a provider/proxy compatibility issue, not something fixable by switching models.
+- `event: "no_candidates"` / `"no_parts"` / `"blocked_finish"` (Gemini) → the model blocked or filtered the prompt. Adjust the prompt, not the provider.
+- `event: "b64_decode_error"` → the proxy returned malformed image data.
+- `event: "save_result"` with `ok=false` → filesystem error (permissions, disk full, read-only mount).
+- `has_url=true, has_b64=false` (GPT) → the proxy returns images by URL; the skill now downloads these, but a download timeout/failure would show as `url_download_error`.
+
+In all cases: do **not** change `IMAGE_PROVIDER`, `--model`, or credentials to "work around" it. Report the log entry and stop, and let the user decide.
+
+> Note: `generation.log` is append-only and grows over time. You can delete it freely — it is regenerated on the next run.
