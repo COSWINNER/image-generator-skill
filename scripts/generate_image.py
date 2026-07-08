@@ -7,6 +7,8 @@ Supports both text-to-image and image-to-image generation.
 
 Configuration (priority: .env > system environment variables > defaults):
     IMAGE_PROVIDER: Provider to use - "gemini" or "gpt" (default: gemini)
+    JSON_TO_PROMPT: Whether to convert JSON to natural language prompt - "true" or "false" (default: true)
+        When false, raw user_intent text is used directly without JSON conversion
 
     Gemini:
         GEMINI_API_KEY: Your Gemini API key (required when provider=gemini)
@@ -753,10 +755,12 @@ def generate_image(
     output_path.mkdir(parents=True, exist_ok=True)
 
     # Build text prompt from JSON
-    prompt_text = build_prompt_text(prompt_json)
+    json_to_prompt = get_env_value("JSON_TO_PROMPT", "true").lower() in ("true", "1", "yes")
+    if json_to_prompt:
+        prompt_text = build_prompt_text(prompt_json)
+    else:
+        prompt_text = prompt_json.get("user_intent") or json.dumps(prompt_json, ensure_ascii=False)
     print(f"\n--- Generated Prompt ---\n{prompt_text}\n------------------------\n")
-
-    # Build content list
     contents = []
 
     # Add input images for image-to-image generation
@@ -970,7 +974,11 @@ def generate_image_gpt(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    prompt_text = build_prompt_text(prompt_json)
+    json_to_prompt = get_env_value("JSON_TO_PROMPT", "true").lower() in ("true", "1", "yes")
+    if json_to_prompt:
+        prompt_text = build_prompt_text(prompt_json)
+    else:
+        prompt_text = prompt_json.get("user_intent") or json.dumps(prompt_json, ensure_ascii=False)
     print(f"\n--- Generated Prompt ---\n{prompt_text}\n------------------------\n")
 
     meta = prompt_json.get("meta", {})

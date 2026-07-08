@@ -27,6 +27,7 @@ class FakeImages:
         self.edit_calls = []
         self.edit_responses = []
         self.generate_calls = []
+        self.generate_responses = []
 
     def edit(self, **kwargs):
         self.edit_calls.append(kwargs)
@@ -41,6 +42,11 @@ class FakeImages:
 
     def generate(self, **kwargs):
         self.generate_calls.append(kwargs)
+        if self.generate_responses:
+            response = self.generate_responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
         return SimpleNamespace(
             data=[SimpleNamespace(b64_json=base64.b64encode(b"fake-image").decode("ascii"))]
         )
@@ -193,3 +199,31 @@ def test_gpt_reference_image_retries_with_safe_prompt_on_proxy_tool_error(monkey
     assert "参考图" in retry_prompt
     assert "Avoid:" not in retry_prompt
     assert "Layout:" not in retry_prompt
+
+
+def test_gpt_text_to_image_retries_with_simple_prompt_on_proxy_tool_error(monkeypatch, tmp_path):
+    client = FakeOpenAIClient()
+    client.images.generate_responses = [
+        RuntimeError("Tool choice 'image_generation' not found in 'tools' parameter."),
+        SimpleNamespace(
+            data=[SimpleNamespace(b64_json=base64.b64encode(b"fake-image").decode("ascii"))]
+        ),
+    ]
+    monkeypatch.setattr(generate_image, "get_openai_client", lambda: client)
+    monkeypatch.setattr(generate_image, "get_env_value", lambda key, default=None: default)
+
+    prompt_json = {
+        "user_intent": "A standard A-pose full body character design sheet, young Chinese man 26 years old 178cm, lean slim build",
+        "meta": {"aspect_ratio": "3:4", "image_size": "2K", "quality": "ultra_photorealistic"},
+    }
+
+    output = generate_image.generate_image_gpt(
+        prompt_json=prompt_json,
+        output_dir=str(tmp_path),
+    )
+
+    assert output
+    assert len(client.images.generate_calls) == 2
+    retry_prompt = client.images.generate_calls[1]["prompt"]
+    assert "Avoid:" not in retry_prompt
+    assert "Style:" not in retry_prompt
