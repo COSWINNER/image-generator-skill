@@ -2,7 +2,7 @@
 
 English | [简体中文](./README_CN.md)
 
-A Claude Code Skill that supports multiple AI image generation providers (Gemini and OpenAI GPT Image), with text-to-image and image-to-image generation across multiple creative domains. Provider is configured via environment variables.
+A Claude Code Skill that supports multiple AI image generation providers (Gemini, OpenAI GPT Image, and Alibaba qwen-image), with text-to-image and image-to-image generation across multiple creative domains. Provider is configured via environment variables.
 
 ## Features
 
@@ -11,6 +11,7 @@ A Claude Code Skill that supports multiple AI image generation providers (Gemini
 **Multi-Provider Support**
 - **Gemini 3 Pro Image**: Real-time web search integration, ultra-high resolution up to 6336×2688
 - **OpenAI GPT Image (gpt-image-2)**: High-quality image generation and editing via Image API
+- **Alibaba qwen-image (qwen-image-3.0, DashScope)**: Text-to-image and image-to-image/editing with 1-3 reference images
 - **Configurable**: Switch providers via `IMAGE_PROVIDER` env variable
 
 **Multi-Domain Support**
@@ -32,7 +33,7 @@ A Claude Code Skill that supports multiple AI image generation providers (Gemini
 
 ### Unique Advantages
 
-- **Multi-Provider**: Switch between Gemini and GPT with a single env variable
+- **Multi-Provider**: Switch between Gemini, GPT, and qwen-image with a single env variable
 - **Multi-Domain Schema**: Structured JSON prompts tailored for photography, graphic design, and UI design
 - **Flexible Deployment**: Both providers support custom API endpoints for proxy usage
 - **Smart Interaction**: Claude automatically analyzes requirements and guides users through details
@@ -57,7 +58,7 @@ A Claude Code Skill that supports multiple AI image generation providers (Gemini
 ### 1. Install Dependencies
 
 ```bash
-pip install -q -U google-genai openai Pillow python-dotenv
+pip install -q -U google-genai openai Pillow python-dotenv dashscope
 ```
 
 ### 2. Configure Environment Variables
@@ -73,7 +74,7 @@ cp .env.example .env
 Edit `.env` with your values:
 
 ```bash
-# Select provider: gemini or gpt
+# Select provider: gemini | gpt | qwen
 IMAGE_PROVIDER=gpt
 
 # Gemini configuration (when IMAGE_PROVIDER=gemini)
@@ -84,6 +85,11 @@ GEMINI_API_KEY=your-gemini-api-key-here
 OPENAI_API_KEY=your-openai-api-key-here
 # OPENAI_BASE_URL=https://your-proxy-url.com/v1
 # OPENAI_MODEL=gpt-image-2
+
+# Qwen/DashScope configuration (when IMAGE_PROVIDER=qwen)
+DASHSCOPE_API_KEY=your-dashscope-api-key-here
+# QWEN_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+# QWEN_MODEL=qwen-image-3.0
 ```
 
 **Method 2: Using system environment variables**
@@ -360,7 +366,7 @@ image-generator-skill/
 ├── README_CN.md                     # Chinese documentation
 ├── .env.example                     # Environment variables template
 ├── scripts/
-│   └── generate_image.py            # Image generation script (Gemini + GPT)
+│   └── generate_image.py            # Image generation script (Gemini + GPT + Qwen)
 └── references/
     ├── json_schema_t2i_reference.md # Complete Text-to-Image JSON reference
     ├── json_schema_i2i_reference.md # Complete Image-to-Image JSON reference

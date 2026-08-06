@@ -2,7 +2,7 @@
 
 [English](./README.md) | 简体中文
 
-一个支持多 AI 提供商（Gemini 和 OpenAI GPT Image）的 Claude Code Skill，支持文生图和图生图功能，涵盖多个创意领域。通过环境变量切换提供商。
+一个支持多 AI 提供商（Gemini、OpenAI GPT Image 和阿里云 qwen-image）的 Claude Code Skill，支持文生图和图生图功能，涵盖多个创意领域。通过环境变量切换提供商。
 
 ## 功能特性
 
@@ -10,6 +10,7 @@
 
 - **Gemini 3 Pro Image**：集成 Google Search 实时搜索，超高分辨率最高可达 6336×2688
 - **OpenAI GPT Image (gpt-image-2)**：通过 Image API 提供高质量图像生成和编辑
+- **阿里云 qwen-image (qwen-image-3.0，DashScope)**：支持文生图与图生图/编辑（1-3 张参考图）
 - **灵活配置**：通过 `IMAGE_PROVIDER` 环境变量切换提供商
 
 ### 核心能力
@@ -33,7 +34,7 @@
 
 ### 独特优势
 
-- **多提供商**：一个环境变量即可在 Gemini 和 GPT 之间切换
+- **多提供商**：一个环境变量即可在 Gemini、GPT 和 qwen-image 之间切换
 - **多领域 Schema**：针对摄影、平面设计、UI 设计定制的结构化 JSON prompt
 - **灵活部署**：两个提供商都支持自定义 API 端点，可配合代理使用
 - **智能交互**：Claude 自动分析需求，引导用户完善细节
@@ -86,7 +87,7 @@
 ### 1. 安装依赖
 
 ```bash
-pip install -q -U google-genai openai Pillow python-dotenv
+pip install -q -U google-genai openai Pillow python-dotenv dashscope
 ```
 
 ### 2. 配置环境变量
@@ -102,7 +103,7 @@ cp .env.example .env
 编辑 `.env` 文件填入你的配置：
 
 ```bash
-# 选择提供商：gemini 或 gpt
+# 选择提供商：gemini | gpt | qwen
 IMAGE_PROVIDER=gpt
 
 # Gemini 配置（当 IMAGE_PROVIDER=gemini 时）
@@ -113,6 +114,11 @@ GEMINI_API_KEY=your-gemini-api-key-here
 OPENAI_API_KEY=your-openai-api-key-here
 # OPENAI_BASE_URL=https://your-proxy-url.com/v1
 # OPENAI_MODEL=gpt-image-2
+
+# Qwen/DashScope 配置（当 IMAGE_PROVIDER=qwen 时）
+DASHSCOPE_API_KEY=your-dashscope-api-key-here
+# QWEN_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+# QWEN_MODEL=qwen-image-3.0
 ```
 
 **方式二：使用系统环境变量**
@@ -389,7 +395,7 @@ image-generator-skill/
 ├── README_CN.md                     # 中文文档（本文件）
 ├── .env.example                     # 环境变量模板
 ├── scripts/
-│   └── generate_image.py            # 图片生成脚本（Gemini + GPT）
+│   └── generate_image.py            # 图片生成脚本（Gemini + GPT + Qwen）
 └── references/
     ├── json_schema_t2i_reference.md # 文生图 JSON prompt 完整参考
     ├── json_schema_i2i_reference.md # 图生图 JSON prompt 完整参考（含精修模式）

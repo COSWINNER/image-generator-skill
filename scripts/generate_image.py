@@ -6,7 +6,7 @@ This script generates images using either Gemini 3 Pro Image API or OpenAI GPT I
 Supports both text-to-image and image-to-image generation.
 
 Configuration (priority: .env > system environment variables > defaults):
-    IMAGE_PROVIDER: Provider to use - "gemini" or "gpt" (default: gemini)
+    IMAGE_PROVIDER: Provider to use - "gemini", "gpt", or "qwen" (default: gemini)
     JSON_TO_PROMPT: Whether to convert JSON to natural language prompt - "true" or "false" (default: true)
         When false, raw user_intent text is used directly without JSON conversion
 
@@ -19,6 +19,14 @@ Configuration (priority: .env > system environment variables > defaults):
         OPENAI_API_KEY: Your OpenAI API key (required when provider=gpt)
         OPENAI_BASE_URL: Custom base URL for API endpoint (optional)
         OPENAI_MODEL: Model name for image generation (default: gpt-image-2)
+
+    Qwen/DashScope (qwen-image, supports text-to-image and image-to-image):
+        DASHSCOPE_API_KEY: Your DashScope API key (required when provider=qwen)
+        QWEN_BASE_URL: Custom API endpoint (optional). For Beijing/Singapore workspace
+            domains, use https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1 or
+            the ap-southeast-1 equivalent. Region keys and endpoints are NOT interchangeable.
+        QWEN_MODEL: Model name for image generation (default: qwen-image-3.0)
+        QWEN_PROMPT_EXTEND: Enable qwen built-in prompt rewriting - "true"/"false" (default: false)
 
 Usage:
     python generate_image.py --prompt-json '<json_string>' [--input-images <path1> <path2> ...]
@@ -62,6 +70,13 @@ try:
     import openai
 except ImportError:
     openai = None
+
+try:
+    import dashscope
+    from dashscope import MultiModalConversation
+except ImportError:
+    dashscope = None
+    MultiModalConversation = None
 
 
 # Non-photorealistic quality/modifier values that should suppress
@@ -135,6 +150,30 @@ def get_openai_client():
         client_kwargs["base_url"] = base_url
 
     return openai.OpenAI(**client_kwargs)
+
+
+def configure_qwen_client() -> str:
+    """Configure the DashScope SDK and return the API key for qwen-image calls.
+
+    The DashScope SDK uses a module-level base URL (``dashscope.base_http_api_url``)
+    while the API key is passed per call. Returns the resolved API key. Exits the
+    process if the SDK is missing or the key is not set (mirrors get_openai_client).
+    """
+    if MultiModalConversation is None or dashscope is None:
+        print("Error: dashscope package not installed.")
+        print("Please install with: pip install -q -U dashscope")
+        sys.exit(1)
+
+    api_key = get_env_value("DASHSCOPE_API_KEY")
+    if not api_key:
+        print("Error: DASHSCOPE_API_KEY environment variable is not set.")
+        sys.exit(1)
+
+    base_url = get_env_value("QWEN_BASE_URL")
+    if base_url:
+        dashscope.base_http_api_url = base_url
+
+    return api_key
 
 
 class DiagLog:
@@ -1255,9 +1294,229 @@ def generate_image_gpt(
     return ""
 
 
+# ===== Qwen / DashScope Image Generation =====
+
+
+def map_size_for_qwen(aspect_ratio: str, image_size: str) -> str:
+    """Map aspect_ratio + image_size to a qwen "W*H" size string.
+
+    qwen-image requires both sides in [512, 2048], total area in [512*512,
+    2048*2048], and aspect ratio in 1:8..8:1. 4K is clamped to the 2K tier
+    because qwen caps each side at 2048 pixels.
+    """
+    try:
+        rw_s, rh_s = str(aspect_ratio).split(":", 1)
+        rw, rh = int(rw_s), int(rh_s)
+        if rw <= 0 or rh <= 0:
+            raise ValueError
+    except Exception:
+        rw, rh = 1, 1
+
+    size = (image_size or "1K").upper()
+    # 4K (and anything larger) clamps down to the 2K tier (qwen max side = 2048)
+    long = 2048 if size in ("2K", "4K") else 1024
+
+    # Base dimensions with the target long side, preserving ratio.
+    if rw >= rh:
+        w, h = long, round(long * rh / rw)
+    else:
+        w, h = round(long * rw / rh), long
+
+    lo, hi = 512, 2048
+    # Preserve ratio: scale up if the short side is below the minimum.
+    short = min(w, h)
+    if 0 < short < lo:
+        s = lo / short
+        w, h = round(w * s), round(h * s)
+    # Scale down if any side exceeds the maximum.
+    mx = max(w, h)
+    if mx > hi:
+        s = hi / mx
+        w, h = round(w * s), round(h * s)
+    # Hard clamp + enforce the area cap (extreme ratios can still overflow).
+    w = max(lo, min(hi, w))
+    h = max(lo, min(hi, h))
+    if w * h > hi * hi:
+        s = ((hi * hi) / (w * h)) ** 0.5
+        w, h = max(lo, round(w * s)), max(lo, round(h * s))
+
+    return f"{w}*{h}"
+
+
+def split_qwen_negative_prompt(prompt: str):
+    """Split the trailing 'Avoid: ...' line out of a built prompt.
+
+    qwen-image has a native negative_prompt parameter, so route the skill's
+    negative wording there instead of leaving it inline in the text. Returns
+    (clean_prompt, negative_prompt_or_None).
+    """
+    negative = None
+    kept = []
+    for line in prompt.splitlines():
+        if line.startswith("Avoid:"):
+            negative = line[len("Avoid:"):].strip()
+        else:
+            kept.append(line)
+    return "\n".join(kept).strip(), (negative or None)
+
+
+def _encode_pil_to_data_uri(img) -> str:
+    """Encode a PIL Image to a base64 PNG data URI for qwen I2I input."""
+    from io import BytesIO
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def parse_qwen_response(response, filepath: Path,
+                        log: Optional[DiagLog] = None, model: str = "") -> str:
+    """Parse a qwen MultiModalConversation response and save the image.
+
+    The generated image is returned as a URL (valid ~24h); download it to
+    filepath. Returns the saved filepath, or '' on failure.
+    """
+    try:
+        choices = response.output.choices
+    except Exception:
+        choices = []
+    if not choices:
+        print("Warning: No choices in qwen response.")
+        if log:
+            log.event("no_choices", provider="qwen", model=model)
+        return ""
+
+    try:
+        content = choices[0].message.content
+    except Exception:
+        content = []
+
+    image_url = None
+    for item in content:
+        if isinstance(item, dict) and item.get("image"):
+            image_url = item["image"]
+            break
+
+    if not image_url:
+        print("Warning: No image in qwen response content.")
+        if log:
+            log.parse_result(provider="qwen", model=model, has_data=False)
+        return ""
+
+    if _download_url(image_url, Path(filepath)):
+        return str(filepath)
+
+    print(f"Warning: failed to download qwen image from {image_url}")
+    if log:
+        log.event("url_download_error", provider="qwen", model=model, url=image_url[:200])
+    return ""
+
+
+def generate_image_qwen(
+    prompt_json: dict,
+    input_images: Optional[list] = None,
+    output_dir: str = "./generation-image",
+    model_override: Optional[str] = None,
+    log: Optional[DiagLog] = None
+) -> str:
+    """Generate image using Alibaba DashScope qwen-image (MultiModalConversation).
+
+    Supports text-to-image (no input images) and image-to-image / editing
+    (1-3 reference images, encoded as base64 data URIs).
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    json_to_prompt = get_env_value("JSON_TO_PROMPT", "true").lower() in ("true", "1", "yes")
+    if json_to_prompt:
+        prompt_text = build_prompt_text(prompt_json)
+    else:
+        prompt_text = prompt_json.get("user_intent") or json.dumps(prompt_json, ensure_ascii=False)
+
+    # Route the skill's negative wording into qwen's native negative_prompt param.
+    prompt_text, negative = split_qwen_negative_prompt(prompt_text)
+    print(f"\n--- Generated Prompt ---\n{prompt_text}\n------------------------\n")
+
+    meta = prompt_json.get("meta", {})
+    aspect_ratio = meta.get("aspect_ratio", "1:1")
+    image_size = meta.get("image_size", "1K")
+    size = map_size_for_qwen(aspect_ratio, image_size)
+    model = model_override or get_env_value("QWEN_MODEL", "qwen-image-3.0")
+    prompt_extend = get_env_value("QWEN_PROMPT_EXTEND", "false").lower() in ("true", "1", "yes")
+    api_key = configure_qwen_client()
+
+    # Build the multimodal content. qwen I2I accepts 1-3 images then exactly one text.
+    content = []
+    is_i2i = bool(input_images)
+    if is_i2i:
+        images = list(input_images)
+        if len(images) > 3:
+            print(f"Warning: qwen-image supports at most 3 reference images; "
+                  f"using the first 3 of {len(images)}.")
+            if log:
+                log.event("image_clamped", provider="qwen", model=model,
+                          provided=len(images), used=3)
+            images = images[:3]
+        for img in images:
+            content.append({"image": _encode_pil_to_data_uri(img)})
+    content.append({"text": prompt_text})
+
+    messages = [{"role": "user", "content": content}]
+
+    # Optional parameters. prompt_extend_mode 'direct' works for both T2I and I2I
+    # ('agent' is T2I-only and would 400 on I2I), so always use 'direct' when on.
+    params = {"prompt_extend": prompt_extend, "size": size}
+    if prompt_extend:
+        params["prompt_extend_mode"] = "direct"
+    if negative:
+        params["negative_prompt"] = negative
+
+    mode = "I2I" if is_i2i else "T2I"
+    print(f"Generating image with qwen {model} (size={size}, mode={mode}, "
+          f"prompt_extend={prompt_extend})...")
+    try:
+        response = MultiModalConversation.call(
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            **params,
+        )
+    except Exception as e:
+        if log:
+            log.api_error(provider="qwen", model=model, error=str(e))
+        raise
+
+    if getattr(response, "status_code", None) != 200:
+        code = getattr(response, "code", "")
+        message = getattr(response, "message", "")
+        err = f"{code} - {message}".strip(" -")
+        print(f"Error: qwen API failed: {err}")
+        if log:
+            log.api_error(provider="qwen", model=model, error=err)
+        return ""
+
+    if log:
+        log.api_success(provider="qwen", model=model, has_data=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filepath = output_path / f"generated_{timestamp}.png"
+
+    saved = parse_qwen_response(response, filepath, log=log, model=model)
+    if saved:
+        print(f"Image saved to: {saved}")
+        if log:
+            log.save_result(provider="qwen", model=model, ok=True, path=saved)
+        return saved
+
+    print("Warning: No image data in response.")
+    if log:
+        log.parse_result(provider="qwen", model=model, has_data=True, saved=False)
+    return ""
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate images using Gemini or OpenAI GPT Image API"
+        description="Generate images using Gemini, OpenAI GPT Image, or Alibaba qwen-image (DashScope) API"
     )
 
     parser.add_argument(
@@ -1285,7 +1544,7 @@ def main():
         "--model",
         type=str,
         default=None,
-        help="Model name to use (overrides env config). Gemini default: gemini-3-pro-image-preview, GPT default: gpt-image-2"
+        help="Model name to use (overrides env config). Gemini default: gemini-3-pro-image-preview, GPT default: gpt-image-2, Qwen default: qwen-image-3.0"
     )
 
     args = parser.parse_args()
@@ -1329,6 +1588,14 @@ def main():
     # Route to appropriate generator
     if provider == "gpt":
         result = generate_image_gpt(
+            prompt_json=prompt_json,
+            input_images=input_images,
+            output_dir=args.output_dir,
+            model_override=args.model,
+            log=log
+        )
+    elif provider == "qwen":
+        result = generate_image_qwen(
             prompt_json=prompt_json,
             input_images=input_images,
             output_dir=args.output_dir,

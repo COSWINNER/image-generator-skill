@@ -1,11 +1,11 @@
 ---
 name: image-generator
-description: "This skill generates images using either Gemini 3 Pro Image API or OpenAI GPT Image API (gpt-image-2), configurable via environment variables. It supports both text-to-image and image-to-image generation including image editing, style transfer, and image merging. The Gemini provider includes real-time web search capabilities via Google Search integration. The provider is selected via the IMAGE_PROVIDER env variable (gemini or gpt). This skill should be used when users want to create, modify, or transform images using AI. The workflow involves three steps: first, Claude analyzes user intent and clarifies unclear requirements through conversation; second, Claude converts intent to structured JSON prompt format; third, Claude calls the generate_image.py script to generate images and save results to the generation-image directory."
+description: "This skill generates images using Gemini 3 Pro Image API, OpenAI GPT Image API (gpt-image-2), or Alibaba qwen-image (DashScope), configurable via environment variables. It supports both text-to-image and image-to-image generation including image editing, style transfer, and image merging. The Gemini provider includes real-time web search capabilities via Google Search integration. The qwen-image provider (qwen-image-3.0) supports text-to-image and image-to-image/editing with 1-3 reference images. The provider is selected via the IMAGE_PROVIDER env variable (gemini, gpt, or qwen). This skill should be used when users want to create, modify, or transform images using AI. The workflow involves three steps: first, Claude analyzes user intent and clarifies unclear requirements through conversation; second, Claude converts intent to structured JSON prompt format; third, Claude calls the generate_image.py script to generate images and save results to the generation-image directory."
 ---
 
-# Gemini / GPT Image Generator Skill
+# Gemini / GPT / Qwen Image Generator Skill
 
-Generate high-quality images using Gemini 3 Pro Image API or OpenAI GPT Image API with structured JSON prompts. Provider is configured via the `IMAGE_PROVIDER` environment variable.
+Generate high-quality images using Gemini 3 Pro Image API, OpenAI GPT Image API, or Alibaba qwen-image (DashScope) with structured JSON prompts. Provider is configured via the `IMAGE_PROVIDER` environment variable.
 
 ## Capabilities
 
@@ -31,7 +31,7 @@ Generate high-quality images using Gemini 3 Pro Image API or OpenAI GPT Image AP
 Ensure the following dependencies are installed:
 
 ```bash
-pip install -q -U google-genai openai Pillow python-dotenv
+pip install -q -U google-genai openai Pillow python-dotenv dashscope
 ```
 
 ### Environment Configuration (Priority: `.env` file > system env vars > defaults)
@@ -49,7 +49,7 @@ OPENAI_BASE_URL=https://your-proxy.example.com/v1
 ```
 
 Configuration variables:
-- `IMAGE_PROVIDER`: Choose provider - `gemini` or `gpt` (default: `gemini`)
+- `IMAGE_PROVIDER`: Choose provider - `gemini`, `gpt`, or `qwen` (default: `gemini`)
 
 **Gemini configuration** (when `IMAGE_PROVIDER=gemini`):
 - `GEMINI_API_KEY`: Your Gemini API key (required)
@@ -60,6 +60,12 @@ Configuration variables:
 - `OPENAI_API_KEY`: Your OpenAI API key (required)
 - `OPENAI_BASE_URL`: Custom API endpoint URL (optional, for proxy or alternative endpoints)
 - `OPENAI_MODEL`: Model name (optional, default: `gpt-image-2`)
+
+**Qwen/DashScope configuration** (when `IMAGE_PROVIDER=qwen`):
+- `DASHSCOPE_API_KEY`: Your Alibaba DashScope API key (required)
+- `QWEN_BASE_URL`: Custom API endpoint (optional). Beijing/Singapore have separate API keys and endpoints that are NOT interchangeable; for workspace domains use `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1` (Beijing) or the `ap-southeast-1` equivalent (Singapore). Defaults to the standard DashScope endpoint when unset.
+- `QWEN_MODEL`: Model name (optional, default: `qwen-image-3.0`; `qwen-image-3.0-pro` for higher quality)
+- `QWEN_PROMPT_EXTEND`: Enable qwen's built-in prompt rewriting (optional, default: `false`). The skill already expands prompts via JSON→NL conversion; enable only if you want qwen's additional rewriting on top.
 
 ## Supported Aspect Ratios and Resolutions
 
@@ -84,6 +90,8 @@ Gemini 3 Pro Image supports the following aspect ratios and resolutions:
 - `16:9` / `9:16` - Desktop wallpapers / Mobile wallpapers
 - `4:5` - Instagram portrait
 - `21:9` - Ultra-wide cinematic
+
+**qwen-image size handling**: The table above reflects Gemini output. The `qwen` provider caps each side at 2048px, so it maps `aspect_ratio` + `image_size` to a `"W*H"` size within `[512, 2048]` per side and clamps `4K` down to the `2K` tier automatically. qwen I2I accepts 1-3 reference images.
 
 ## Workflow
 
